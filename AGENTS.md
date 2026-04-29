@@ -20,7 +20,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 10. `agents/*.md` — bundled reusable package agents.
 11. `tests/` — executable contract and package artifact checks.
 
-`PLAN.md` and `HANDOFF.md` are ignored local control-plane state, not canonical package corpus and not npm package contents. Use them only for active work, remaining work, or handoff state.
+`CONTINUE.md`, `PLAN.md`, and `HANDOFF.md` are ignored local runtime/control-plane state, not canonical package corpus and not npm package contents. Use plan and handoff files only for active work, remaining work, or handoff state.
 
 ## Canonical identity
 
