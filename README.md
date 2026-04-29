@@ -21,7 +21,7 @@ pi install npm:pi-multiagent
 Pinned from GitHub:
 
 ```bash
-pi install git:github.com/Tiziano-AI/pi-multiagent@v0.1.1
+pi install git:github.com/Tiziano-AI/pi-multiagent@v0.1.3
 ```
 
 From a local checkout:
@@ -152,14 +152,16 @@ Bare library names are invalid. Use `package:reviewer`, not `reviewer`.
 
 Package agents:
 
-| Ref | Use |
-| --- | --- |
-| `package:scout` | Fast evidence gathering. |
-| `package:planner` | Plans from evidence. |
-| `package:critic` | Pre-mortem review. |
-| `package:reviewer` | Final code or plan review. |
-| `package:worker` | Scoped implementation. |
-| `package:synthesizer` | Fan-in and decision synthesis. |
+| Ref | Best use | Default tools | Thinking |
+| --- | --- | --- | --- |
+| `package:scout` | Reconnaissance: files, docs, tests, commands, runtime evidence. | `read`, `grep`, `find`, `ls`, `bash` | `low` |
+| `package:planner` | Evidence-backed implementation plan with owners, contracts, failure modes, and validation. | `read`, `grep`, `find`, `ls` | `medium` |
+| `package:critic` | Pre-implementation stress test for hidden coupling, trust gaps, regressions, data loss, and missing proof. | `read`, `grep`, `find`, `ls` | `high` |
+| `package:reviewer` | Pre-release review of code, plans, diffs, tests, boundaries, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash` | `medium` |
+| `package:worker` | One scoped implementation change with synchronized code, docs, tests, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | `medium` |
+| `package:synthesizer` | Evidence-weighted fan-in that preserves disagreement and residual risk. | `read`, `grep`, `find`, `ls` | `medium` |
+
+Catalog output shows each source-qualified ref, declared tools, thinking level, optional model, description, file path, and SHA-256 prefix so the caller can choose and cite the prompt it used.
 
 Human-authored library agents live in:
 

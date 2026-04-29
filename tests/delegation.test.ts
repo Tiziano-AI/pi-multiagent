@@ -289,7 +289,23 @@ test("runAgentTeam catalog reports active discovery sources and raw catalog path
 		{ action: "catalog", library: { sources: ["project"], projectAgents: "deny" } },
 		{
 			cwd: root,
-			discovery: { ...discovery(root), diagnostics: [], sources: [], agents: [{ name: "reviewer", ref: "package:reviewer", source: "package", description: "safe", tools: ["read", "sk-tool-evidence-abcdefghijklmnopqrstuvwxyz"], model: undefined, thinking: undefined, systemPrompt: "x", filePath: "/tmp/OPENAI_API_KEY=sk-file-evidence/reviewer.md", sha256: "a".repeat(64) }] },
+			discovery: {
+				...discovery(root),
+				diagnostics: [],
+				sources: [],
+				agents: [{
+					name: "reviewer",
+					ref: "package:reviewer",
+					source: "package",
+					description: "safe",
+					tools: ["read", "sk-tool-evidence-abcdefghijklmnopqrstuvwxyz"],
+					model: "sk-model-evidence-abcdefghijklmnopqrstuvwxyz",
+					thinking: "high",
+					systemPrompt: "x",
+					filePath: "/tmp/OPENAI_API_KEY=sk-file-evidence/reviewer.md",
+					sha256: "a".repeat(64),
+				}],
+			},
 			library: { sources: ["project"], query: undefined, projectAgents: "deny" },
 			defaults: { model: undefined, thinking: undefined },
 			signal: undefined,
@@ -300,6 +316,8 @@ test("runAgentTeam catalog reports active discovery sources and raw catalog path
 	assert.equal(result.content[0].text.includes("Sources: project"), false);
 	assert.equal(result.content[0].text.includes("sk-file-evidence"), true);
 	assert.equal(result.content[0].text.includes("sk-tool-evidence"), true);
+	assert.equal(result.content[0].text.includes("thinking=high"), true);
+	assert.equal(result.content[0].text.includes("sk-model-evidence"), true);
 	assert.equal(result.details.catalog[0].filePath.includes("sk-file-evidence"), true);
 	assert.equal(result.details.catalog[0].tools?.some((tool) => tool.includes("sk-tool-evidence")), true);
 	await rm(root, { recursive: true, force: true });

@@ -28,10 +28,15 @@ function formatErrorForModel(details: AgentTeamDetails): string {
 }
 
 export function formatCatalogForModel(details: AgentTeamDetails): string {
-	const rows = details.catalog.map(
-		(agent) =>
-			`- ${modelText(agent.ref)}${agent.tools ? ` tools=${agent.tools.map(modelText).join(",")}` : ""}: ${modelText(agent.description)} (${modelText(agent.filePath)}, sha256:${modelText(agent.sha256.slice(0, 12))})`,
-	);
+	const rows = details.catalog.map((agent) => {
+		const metadata = [
+			agent.tools ? `tools=${agent.tools.map(modelText).join(",")}` : "",
+			agent.thinking ? `thinking=${modelText(agent.thinking)}` : "",
+			agent.model ? `model=${modelText(agent.model)}` : "",
+		].filter((item) => item.length > 0);
+		const metadataText = metadata.length > 0 ? ` ${metadata.join(" ")}` : "";
+		return `- ${modelText(agent.ref)}${metadataText}: ${modelText(agent.description)} (${modelText(agent.filePath)}, sha256:${modelText(agent.sha256.slice(0, 12))})`;
+	});
 	return [
 		"# agent_team catalog",
 		"",

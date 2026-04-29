@@ -79,7 +79,7 @@ Default library behavior:
 
 Catalog rejects run-only fields (`objective`, `agents`, `steps`, `synthesis`, `limits`) instead of silently ignoring them. `library.query` is catalog-only; run calls reject it because query filtering does not scope execution. Runtime validation failures render as `# agent_team error` with diagnostics and no normal catalog/run body.
 
-Catalog output includes each agent's source-qualified ref, declared tools, description, file path, and SHA-256 prefix. It reports active discovery sources, not denied requested sources, and renders `none` when no source is active. Structured details include the full SHA-256. This lets the caller distinguish package/user/project prompts and cite provenance.
+Catalog output includes each agent's source-qualified ref, declared tools, thinking level, optional model, description, file path, and SHA-256 prefix. It reports active discovery sources, not denied requested sources, and renders `none` when no source is active. Structured details include the full SHA-256. This lets the caller distinguish package/user/project prompts, choose the right role, and cite provenance.
 
 ## Run action
 
