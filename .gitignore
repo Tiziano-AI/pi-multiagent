@@ -1,0 +1,12 @@
+node_modules/
+.pnpm-store/
+.pi/
+.env
+.env.*
+*.tgz
+*.log
+.DS_Store
+coverage/
+dist/
+build/
+.tmp/

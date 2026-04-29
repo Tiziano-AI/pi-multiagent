@@ -1,0 +1,50 @@
+{
+  "name": "pi-multiagent",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Run isolated Pi subagents from one model-native agent_team tool.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "multiagent",
+    "subagent",
+    "agent-tool"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Tiziano-AI/pi-multiagent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Tiziano-AI/pi-multiagent/issues"
+  },
+  "homepage": "https://github.com/Tiziano-AI/pi-multiagent#readme",
+  "files": [
+    "README.md",
+    "AGENTS.md",
+    "VISION.md",
+    "ARCH.md",
+    "LICENSE",
+    "agents/*.md",
+    "extensions/**/*.ts"
+  ],
+  "scripts": {
+    "test": "node --no-warnings --experimental-strip-types --loader ./tests/pi-peer-loader.mjs --test tests/*.test.ts",
+    "smoke:pi": "node --no-warnings --experimental-strip-types --loader ./tests/pi-peer-loader.mjs tests/smoke-pi.ts",
+    "check:pack": "node --experimental-strip-types tests/check-pack.ts",
+    "check:pi-load": "node --no-warnings --experimental-strip-types --loader ./tests/pi-peer-loader.mjs tests/check-package-load.ts",
+    "check:source-size": "node --experimental-strip-types tests/check-source-size.ts",
+    "gate": "pnpm test && pnpm run smoke:pi && pnpm run check:pack && pnpm run check:pi-load && pnpm run check:source-size"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/multiagent/index.ts"
+    ]
+  }
+}
