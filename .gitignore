@@ -1,12 +1,36 @@
+# Dependencies and package-manager caches
 node_modules/
 .pnpm-store/
+.npm/
+.yarn/
+
+# Local Pi and continuation runtime state
 .pi/
+CONTINUE.md
+
+# Credentials and local environment
+env/
 .env
 .env.*
-*.tgz
-*.log
-.DS_Store
+.npmrc
+
+# Build, coverage, and temporary outputs
 coverage/
 dist/
 build/
 .tmp/
+tmp/
+.cache/
+*.tsbuildinfo
+
+# Package artifacts and logs
+*.tgz
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor noise
+.DS_Store
+._*

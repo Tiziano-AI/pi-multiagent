@@ -1,0 +1,41 @@
+# Defensive excludes. The canonical package allowlist is package.json "files".
+
+# Source-control and local planning state
+.git/
+.github/
+.gitignore
+.npmignore
+PLAN.md
+CONTINUE.md
+
+# Tests and development-only checks
+tests/
+coverage/
+
+# Local Pi state and environment
+.pi/
+.env
+.env.*
+.npmrc
+
+# Dependencies, caches, builds, and generated artifacts
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+dist/
+build/
+.tmp/
+tmp/
+.cache/
+*.tsbuildinfo
+*.tgz
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor noise
+.DS_Store
+._*

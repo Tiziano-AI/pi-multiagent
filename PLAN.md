@@ -1,6 +1,6 @@
 # pi-multiagent plan
 
-Active objective: prepare the standalone `/Users/tiziano/Code/pi-multiagent` repository for a `0.1.1` patch release that adds npm-visible canonical docs and a product-owned `pi-multiagent` skill, without running `npm publish`.
+Active objective: prepare the standalone `/Users/tiziano/Code/pi-multiagent` repository for a `0.1.1` patch release that adds npm-visible canonical docs, a product-owned `pi-multiagent` skill, and sensible git/npm ignore boundaries, without running `npm publish`.
 
 Current contract:
 
@@ -37,9 +37,19 @@ Current proof:
 - Source metrics passed at 16 extension TypeScript files, 3325 lines, and 136196 bytes.
 - Focused live smoke after the final reload passed for catalog refs, bare-name rejection, raw evidence, exact-read file-ref, source-qualified package refs, synthesis, invalid-model provenance with quoted fields and parent exit fact, and bash/project-settings denial with quoted provenance.
 
+Current `0.1.1` release-prep proof:
+
+- `pnpm run gate` passed with 140 tests.
+- `npm pack --dry-run --json` produced `pi-multiagent-0.1.1.tgz` with 29 intended package entries: `AGENTS.md`, `VISION.md`, `LICENSE`, docs, package agents, `skills/pi-multiagent/SKILL.md`, extension sources, and `package.json`; tests, runtime state, tarballs, and `PLAN.md` were excluded.
+- `npm publish --dry-run` passed for `pi-multiagent@0.1.1`.
+- Git ignore checks covered local env, `.npmrc`, `.pi`, continuation docs, tarballs, dependency dirs, temp/cache paths, logs, and OS noise.
+- The defensive `.npmignore` excludes source-control/runtime/dev-only state while package publishing remains primarily allowlisted by `package.json` `files`.
+- `git diff --check` passed.
+- `npm view pi-multiagent@0.1.1 version` returned npm `E404`, so `0.1.1` remains unpublished at this checkpoint.
+- Local commit/tag proof exists for the docs/skill commit, the `0.1.1` version commit, and local tag `v0.1.1`.
+
 Remaining verification:
 
-- Run release-prep gates from `/Users/tiziano/Code/pi-multiagent`: `pnpm run gate`, `npm pack --dry-run --json`, `npm publish --dry-run`, `git diff --check`, status, commit/tag proof.
 - User-run `npm publish` remains pending by request.
 
 Out of scope unless requested:

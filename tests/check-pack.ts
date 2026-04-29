@@ -29,7 +29,17 @@ for (const rawFile of rawFiles) {
 for (const required of requiredPackedFiles()) {
 	assert.equal(paths.has(required), true, `packed artifact is missing ${required}`);
 }
-for (const forbidden of ["PLAN.md", "tests/smoke-pi.ts", "tests/check-pack.ts"]) {
+for (const forbidden of [
+	".gitignore",
+	".npmignore",
+	".npmrc",
+	"CONTINUE.md",
+	"PLAN.md",
+	"package-lock.json",
+	"pnpm-lock.yaml",
+	"tests/smoke-pi.ts",
+	"tests/check-pack.ts",
+]) {
 	assert.equal(paths.has(forbidden), false, `packed artifact should not include ${forbidden}`);
 }
 for (const path of paths) {
