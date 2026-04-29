@@ -35,6 +35,7 @@ for (const forbidden of [
 	".npmrc",
 	"CONTINUE.md",
 	"PLAN.md",
+	"HANDOFF.md",
 	"package-lock.json",
 	"pnpm-lock.yaml",
 	"tests/smoke-pi.ts",

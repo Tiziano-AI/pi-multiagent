@@ -1,12 +1,13 @@
 # Defensive excludes. The canonical package allowlist is package.json "files".
 
-# Source-control and local planning state
+# Source-control and local control-plane state
 .git/
 .github/
 .gitignore
 .npmignore
-PLAN.md
 CONTINUE.md
+PLAN.md
+HANDOFF.md
 
 # Tests and development-only checks
 tests/

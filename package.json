@@ -2,7 +2,7 @@
   "name": "pi-multiagent",
   "version": "0.1.1",
   "type": "module",
-  "description": "Run isolated Pi subagents from one model-native agent_team tool.",
+  "description": "Pi package for isolated same-session delegation.",
   "keywords": [
     "pi-package",
     "pi",

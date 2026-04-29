@@ -4,9 +4,11 @@ node_modules/
 .npm/
 .yarn/
 
-# Local Pi and continuation runtime state
+# Local Pi and control-plane runtime state
 .pi/
 CONTINUE.md
+PLAN.md
+HANDOFF.md
 
 # Credentials and local environment
 env/

@@ -2,13 +2,17 @@
 
 ## Role
 
-`pi-multiagent` is a model-native Pi package. Its primary customer is the calling main agent, not a human operator.
+`pi-multiagent` is a Pi package for isolated same-session delegation.
 
-The package exposes one canonical tool:
+The package exposes one tool:
 
 - `agent_team`
 
-`agent_team` lets the caller define temporary inline agents, optionally use human-authored library agents as seeds, express work as dependency steps, and request synthesis. Delegated agents run as isolated child Pi processes with `--mode json -p --no-session --no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes`. The child launch also passes an empty `--system-prompt` to suppress project `SYSTEM.md` discovery while preserving Pi's default coding prompt, appends the generated subagent prompt through `--append-system-prompt`, and sends the delegated task over stdin rather than argv.
+`agent_team` lets the caller define temporary inline agents, use source-qualified library agents, express work as dependency steps, and request synthesis.
+
+Delegated agents run as isolated child Pi processes with `--mode json -p --no-session --no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes`.
+
+The child launch also passes an empty `--system-prompt` to suppress project `SYSTEM.md` discovery while preserving Pi's default coding prompt, appends the generated subagent prompt through `--append-system-prompt`, and sends the delegated task over stdin rather than argv.
 
 Human-authored Markdown agent files are only a reusable library. They are not required for invocation.
 
@@ -235,7 +239,7 @@ Resource caps are part of the public contract: child JSON stdout lines are bound
 
 Subagent stdout, raw stderr, malformed stdout diagnostics, model text, tool previews, catalog metadata, output files, and failure fields are same-session evidence. Structured details and artifacts preserve captured evidence as observed except for bounded capture/truncation. Model-facing output blocks escape delimiter-like line starts; inline summaries and metadata lines compact whitespace for display. Failed and blocked steps render the terminal reason, first observed cause, and structured failure provenance even when partial assistant output exists; upstream handoffs include those failure facts outside copied output truncation and `file-ref` omission. `file-ref` handoffs place the exact-read path as parent metadata and leave the copied child output block empty. For caller-agent triage, model-facing provenance orders JSON-stringed `likely_root`, `first_observed`, `closeout`, and `failure_terminated` before lower-priority process facts; child-controlled assistant error text cannot reclassify a trusted parent/process failure prefix.
 
-Temp full-output files are intentionally retained because they are evidence artifacts for the caller. The caller/operator owns cleanup after use. Mode `0600` temp files protect against other users, not against same-UID processes or untrusted children with filesystem-capable tools such as `read`, `grep`, `find`, `ls`, or `bash`; upstream modes are model-handoff controls, not an OS sandbox. `file-ref` validation still requires the exact `read` tool because the receiving agent must dereference artifact contents. Temp-file write failures remove the just-created temp directory when possible while preserving the original write failure in diagnostics. Temp-file persistence and cleanup failures are reported as diagnostics while preserving bounded model output and completed step evidence.
+Temp full-output files are retained because they are evidence artifacts for the caller. The caller owns cleanup after use. Mode `0600` temp files protect against other users, not against same-UID processes or untrusted children with filesystem-capable tools such as `read`, `grep`, `find`, `ls`, or `bash`; upstream modes are model-handoff controls, not an OS sandbox. `file-ref` validation still requires the exact `read` tool because the receiving agent must dereference artifact contents. Temp-file write failures remove the just-created temp directory when possible while preserving the original write failure in diagnostics. Temp-file persistence and cleanup failures are reported as diagnostics while preserving bounded model output and completed step evidence.
 
 ## Recoverability posture
 
@@ -266,4 +270,4 @@ pnpm run check:source-size
 pnpm run gate
 ```
 
-`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, the package-owned skill, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, and `PLAN.md`.
+`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, the package-owned skill, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, `PLAN.md`, and `HANDOFF.md`.

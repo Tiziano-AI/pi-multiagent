@@ -2,13 +2,13 @@
 
 This file is the repo-local operating guide for agents working in `pi-multiagent`.
 
-`pi-multiagent` is a Pi package for one product promise: give the calling Pi agent a model-native `agent_team` tool for isolated same-session delegation, evidence capture, and synthesis.
+`pi-multiagent` is a Pi package with one public contract: it exposes `agent_team` for isolated same-session delegation, evidence capture, and synthesis.
 
 ## Canonical corpus
 
 Read in this order when the task touches product, docs, packaging, or runtime behavior:
 
-1. `VISION.md` — product promise, principles, success criteria, and non-goals.
+1. `VISION.md` — product purpose, principles, success criteria, and non-goals.
 2. `README.md` — user/operator-facing install, tool shape, examples, limits, and validation.
 3. `ARCH.md` — architecture contract, schema owner, trust boundary, lifecycle, and provenance.
 4. `skills/pi-multiagent/SKILL.md` — package-owned progressive-disclosure guide for using, reviewing, or troubleshooting `agent_team`.
@@ -20,7 +20,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 10. `agents/*.md` — bundled reusable package agents.
 11. `tests/` — executable contract and package artifact checks.
 
-`PLAN.md` is source control-plane state, not part of the npm package. Keep it current when work remains or release handoff state matters.
+`PLAN.md` and `HANDOFF.md` are ignored local control-plane state, not canonical package corpus and not npm package contents. Use them only for active work, remaining work, or handoff state.
 
 ## Canonical identity
 
@@ -124,6 +124,6 @@ When behavior, schema, package metadata, package skill text, bundled agent promp
 - `skills/pi-multiagent/SKILL.md` for model-facing invocation guidance.
 - `agents/*.md` for package-agent behavior.
 - `tests/` for executable expectations.
-- `PLAN.md` for remaining work or handoff state.
+- Ignored local `PLAN.md` or `HANDOFF.md` for active work, remaining work, or handoff state.
 
 Do not let docs claim a feature that runtime/tests do not implement, or let runtime expose behavior not explained in docs.

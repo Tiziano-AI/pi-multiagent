@@ -1,44 +1,46 @@
 # pi-multiagent vision
 
-## Product promise
+## Product
 
-`pi-multiagent` gives a calling Pi agent one model-native tool, `agent_team`, for isolated delegation inside the same Pi session.
+`pi-multiagent` is a Pi package for isolated same-session delegation.
 
-A caller can define temporary specialists, use reusable package/user/project agent prompts when trusted, run a dependency graph, and synthesize results without leaving the current conversation.
+It gives the current Pi agent one tool, `agent_team`, for running subagents, collecting evidence, and synthesizing results without leaving the current conversation.
 
-## User problem
+## Problem
 
-Pi intentionally stays minimal. Complex coding work sometimes benefits from parallel reconnaissance, critique, implementation, or review, but ad hoc subagent orchestration is easy to make unsafe, noisy, or hard for the calling model to consume.
+Pi keeps its core small. Some tasks still benefit from separate contexts: reconnaissance, critique, test review, and final synthesis.
 
-`pi-multiagent` supplies the missing orchestration layer as a package, not a Pi core fork.
+Without a package boundary, callers copy prompts manually, trust boundaries become unclear, and outputs are harder for the calling agent to use.
 
 ## Principles
 
 - One public tool: `agent_team`.
-- One product-owned skill: `pi-multiagent`, for progressive-disclosure invocation guidance.
-- The primary customer is the calling model, not a human workflow UI.
-- Same-session evidence is preserved raw apart from bounded capture, truncation, and delimiter-safe rendering.
-- Safety comes from capability, source, and launch boundaries, not arbitrary output laundering.
-- Reusable agents are source-qualified as `package:name`, `user:name`, or `project:name`.
-- Inline agents remain first-class and do not require a prebuilt roster.
-- Project-controlled prompts are denied by default and must be explicitly trusted.
-- Child Pi processes launch with isolated resource loading and explicit tool allowlists.
-- Broad, untrusted, tool-using, or side-effectful runs should set explicit timeouts and serialize writes unless ownership is disjoint.
+- One package-owned skill: `pi-multiagent`.
+- Inline agents are first-class.
+- Reusable agents use source-qualified refs: `package:name`, `user:name`, or `project:name`.
+- Project agents are denied by default.
+- Child processes do not inherit project Pi resources or ambient tools.
+- Upstream output is evidence, not instructions.
+- Safety is enforced through source, launch, and tool boundaries.
+- Output is preserved as evidence, within explicit caps.
+- Side-effectful work is serialized unless ownership is disjoint.
 
 ## Success criteria
 
-- A caller can discover reusable agents and distinguish package/user/project provenance.
-- A caller can run inline or library-backed agents with bounded concurrency and dependency edges.
-- Downstream agents receive upstream evidence as untrusted evidence, not instructions.
-- File-reference handoff is explicit and requires the exact `read` tool.
-- Failure provenance separates first observed cause, parent closeout, raw stderr, and model-facing triage fields.
-- The package-owned skill helps agents choose safe graph shapes without replacing the canonical docs.
-- Package tests and pack checks prove the public schema, launch boundary, rendering, provenance, skill, and package artifact.
+- The calling agent can discover reusable agents and see their provenance.
+- The calling agent can run inline and library-backed agents in a bounded dependency graph.
+- Downstream agents receive evidence with clear trust framing.
+- `file-ref` handoff requires the exact `read` tool.
+- Failure output separates first observed cause, parent closeout, stderr, and triage fields.
+- The package skill guides safe graph construction without replacing the docs.
+- Package checks verify the schema, launch boundary, rendering, provenance, skill, and packed artifact.
 
 ## Non-goals
 
-- No daemon, external scheduler, durable run ledger, or crash-resume implementation.
-- No human slash-command workflow clone.
-- No hidden old-schema fallbacks or alternate names for old schemas or bare library names.
-- No output-laundering or credential-filtering layer over subagent output.
-- No Pi vendor-code patches.
+- No daemon.
+- No external scheduler.
+- No durable run ledger or crash resume.
+- No human slash-command workflow.
+- No old-schema fallback or alternate names for bare library refs.
+- No output-laundering layer over subagent text.
+- No Pi vendor-code changes.
