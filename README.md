@@ -4,6 +4,25 @@ Model-native Pi package for isolated inline multiagent delegation.
 
 The primary customer is the calling main agent. Humans can add reusable Markdown agent specs, but `agent_team` does not require a pre-existing roster.
 
+## Highlights
+
+- **One model-native tool:** `agent_team` handles catalog discovery, dependency-step execution, and optional synthesis.
+- **Inline agents first:** define temporary specialists in the call without maintaining a roster.
+- **Reusable library agents:** use source-qualified refs such as `package:reviewer`, `user:name`, or trusted `project:name`.
+- **Isolated child Pi launches:** child processes run without inherited sessions, extensions, context files, skills, prompt templates, themes, or ambient tools.
+- **Evidence-preserving handoff:** subagent output, stderr, diagnostics, tool previews, artifacts, and failure provenance return to the same Pi session.
+- **Explicit trust boundaries:** project agents are denied by default, `file-ref` requires exact `read`, and bash-enabled children refuse cwd trees with project settings.
+
+## Canonical corpus
+
+- [`AGENTS.md`](AGENTS.md) — repo-local operating guide and release procedure for coding agents.
+- [`VISION.md`](VISION.md) — product promise, principles, success criteria, and non-goals.
+- [`README.md`](README.md) — user/operator guide: install, tool shape, examples, limits, and validation.
+- [`ARCH.md`](ARCH.md) — architecture contract: schema owner, trust boundary, lifecycle, evidence, and failure provenance.
+- [`skills/pi-multiagent/SKILL.md`](skills/pi-multiagent/SKILL.md) — package-owned skill for using or reviewing `agent_team`.
+- [`agents/`](agents/) — bundled reusable package agents discoverable as `package:name` refs.
+- [`tests/`](tests/) — executable contract for schema, planning, boundaries, rendering, package loading, and package contents.
+
 ## Install
 
 From npm:
@@ -15,7 +34,7 @@ pi install npm:pi-multiagent
 From the GitHub repo:
 
 ```bash
-pi install git:github.com/Tiziano-AI/pi-multiagent@v0.1.0
+pi install git:github.com/Tiziano-AI/pi-multiagent@v0.1.1
 ```
 
 From a local checkout:
@@ -38,6 +57,16 @@ pi -e /Users/tiziano/Code/pi-multiagent
 ```
 
 After installing into a live Pi session, run `/reload`.
+
+## Package skill
+
+Installing the package also loads the `pi-multiagent` skill. Use it when designing, invoking, reviewing, or troubleshooting `agent_team` graphs:
+
+```text
+/skill:pi-multiagent
+```
+
+The skill is owned by this package and points back to the canonical docs above.
 
 ## Tool: `agent_team`
 

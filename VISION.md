@@ -15,6 +15,7 @@ Pi intentionally stays minimal. Complex coding work sometimes benefits from para
 ## Principles
 
 - One public tool: `agent_team`.
+- One product-owned skill: `pi-multiagent`, for progressive-disclosure invocation guidance.
 - The primary customer is the calling model, not a human workflow UI.
 - Same-session evidence is preserved raw apart from bounded capture, truncation, and delimiter-safe rendering.
 - Safety comes from capability, source, and launch boundaries, not arbitrary output laundering.
@@ -31,7 +32,8 @@ Pi intentionally stays minimal. Complex coding work sometimes benefits from para
 - Downstream agents receive upstream evidence as untrusted evidence, not instructions.
 - File-reference handoff is explicit and requires the exact `read` tool.
 - Failure provenance separates first observed cause, parent closeout, raw stderr, and model-facing triage fields.
-- Package tests and pack checks prove the public schema, launch boundary, rendering, provenance, and package artifact.
+- The package-owned skill helps agents choose safe graph shapes without replacing the canonical docs.
+- Package tests and pack checks prove the public schema, launch boundary, rendering, provenance, skill, and package artifact.
 
 ## Non-goals
 

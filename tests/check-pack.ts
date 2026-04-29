@@ -46,6 +46,7 @@ function requiredPackedFiles(): string[] {
 		"ARCH.md",
 		"LICENSE",
 		...collectFiles("agents", ".md"),
+		...collectFiles("skills", ".md"),
 		...collectFiles("extensions", ".ts"),
 	];
 }

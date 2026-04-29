@@ -26,6 +26,7 @@
     "ARCH.md",
     "LICENSE",
     "agents/*.md",
+    "skills/**/*.md",
     "extensions/**/*.ts"
   ],
   "scripts": {
@@ -45,6 +46,9 @@
   "pi": {
     "extensions": [
       "./extensions/multiagent/index.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   }
 }

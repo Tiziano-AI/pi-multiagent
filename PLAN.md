@@ -1,6 +1,6 @@
 # pi-multiagent plan
 
-Active objective: prepare the standalone `/Users/tiziano/Code/pi-multiagent` repository for the first npm/GitHub release of `pi-multiagent` without running `npm publish`.
+Active objective: prepare the standalone `/Users/tiziano/Code/pi-multiagent` repository for a `0.1.1` patch release that adds npm-visible canonical docs and a product-owned `pi-multiagent` skill, without running `npm publish`.
 
 Current contract:
 
@@ -16,30 +16,30 @@ Current contract:
 - `file-ref` receivers must include the exact `read` tool; `agent-team-synthesizer` is reserved for the default synthesis agent.
 - `failureProvenance` is structured so the first observed failure stays separate from parent closeout fields, and model-facing provenance puts JSON-stringed likely root, first observed cause, closeout, and termination flag first for caller-agent triage.
 - Product timeout and lifecycle contracts remain unchanged: no implicit per-step timeout; callers should set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted, or tool-using runs. `agent_team` is non-atomic and not crash-resumable.
-- Standalone package identity is `pi-multiagent`, version `0.1.0`, source repo `/Users/tiziano/Code/pi-multiagent`, GitHub repo `https://github.com/Tiziano-AI/pi-multiagent`, and npm package `pi-multiagent`.
+- Standalone package identity is `pi-multiagent`, current release candidate version `0.1.1`, source repo `/Users/tiziano/Code/pi-multiagent`, GitHub repo `https://github.com/Tiziano-AI/pi-multiagent`, and npm package `pi-multiagent`.
+- Canonical package docs are `AGENTS.md`, `VISION.md`, `README.md`, and `ARCH.md`.
+- The package-owned Pi skill is `skills/pi-multiagent/SKILL.md`; bundled `agents/*.md` files remain `agent_team` library prompts, not Pi skills.
 
 Release workflow:
 
 - Validate local package candidate.
-- Commit the standalone repo and create tag `v0.1.0`.
+- Commit the docs/skill change.
+- Run `npm version patch` to create the `0.1.1` version commit and `v0.1.1` tag.
 - Stop before `npm publish` so the user can publish manually.
-- After the user confirms npm publish succeeded, push `main` and `v0.1.0`, then create the GitHub release.
+- After the user confirms npm publish succeeded, push `main` and `v0.1.1`, then create the GitHub release.
 
 Current proof:
 
+- `0.1.0` was published to npm and released on GitHub.
 - Targeted JSON-event and delegation tests passed after the latest provenance, closeout, raw-stderr, capture-overflow, and caller-agent UX edits.
 - Local package gate passed with 140 tests after the latest source edits.
 - Residue scans passed for disallowed terminology, alternate catalog formatter names, and stale ref wording after the latest source edits.
 - Source metrics passed at 16 extension TypeScript files, 3325 lines, and 136196 bytes.
 - Focused live smoke after the final reload passed for catalog refs, bare-name rejection, raw evidence, exact-read file-ref, source-qualified package refs, synthesis, invalid-model provenance with quoted fields and parent exit fact, and bash/project-settings denial with quoted provenance.
-- Release-prep gate from `/Users/tiziano/Code/pi-multiagent` passed with 140 tests.
-- `npm pack --dry-run --json` produced `pi-multiagent-0.1.0.tgz` with 28 intended package entries: `AGENTS.md`, `VISION.md`, `LICENSE`, docs, package agents, extension sources, and `package.json`; tests, runtime state, tarballs, and `PLAN.md` were excluded.
-- `git diff --check` passed.
-- npm name check still returned `E404 Not Found` before release prep, so `pi-multiagent` appeared unclaimed at that time.
 
 Remaining verification:
 
-- Commit/tag proof for `v0.1.0`.
+- Run release-prep gates from `/Users/tiziano/Code/pi-multiagent`: `pnpm run gate`, `npm pack --dry-run --json`, `npm publish --dry-run`, `git diff --check`, status, commit/tag proof.
 - User-run `npm publish` remains pending by request.
 
 Out of scope unless requested:

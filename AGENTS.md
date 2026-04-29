@@ -11,13 +11,14 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 1. `VISION.md` — product promise, principles, success criteria, and non-goals.
 2. `README.md` — user/operator-facing install, tool shape, examples, limits, and validation.
 3. `ARCH.md` — architecture contract, schema owner, trust boundary, lifecycle, and provenance.
-4. `package.json` — npm identity, Pi manifest, scripts, file inclusion, and peer dependencies.
-5. `extensions/multiagent/index.ts` — extension entry point and `agent_team` registration.
-6. `extensions/multiagent/src/schemas.ts` and `extensions/multiagent/src/planning.ts` — public input contract and runtime validation.
-7. `extensions/multiagent/src/delegation.ts`, `child-launch.ts`, `child-runtime.ts`, `json-events.ts`, `result-format.ts`, and `failure-provenance.ts` — execution, launch boundary, capture, and model-facing output.
-8. `extensions/multiagent/src/agents.ts` and `library-policy.ts` — package/user/project library discovery and trust policy.
-9. `agents/*.md` — bundled reusable package agents.
-10. `tests/` — executable contract and package artifact checks.
+4. `skills/pi-multiagent/SKILL.md` — package-owned progressive-disclosure guide for using, reviewing, or troubleshooting `agent_team`.
+5. `package.json` — npm identity, Pi manifest, scripts, file inclusion, and peer dependencies.
+6. `extensions/multiagent/index.ts` — extension entry point and `agent_team` registration.
+7. `extensions/multiagent/src/schemas.ts` and `extensions/multiagent/src/planning.ts` — public input contract and runtime validation.
+8. `extensions/multiagent/src/delegation.ts`, `child-launch.ts`, `child-runtime.ts`, `json-events.ts`, `result-format.ts`, and `failure-provenance.ts` — execution, launch boundary, capture, and model-facing output.
+9. `extensions/multiagent/src/agents.ts` and `library-policy.ts` — package/user/project library discovery and trust policy.
+10. `agents/*.md` — bundled reusable package agents.
+11. `tests/` — executable contract and package artifact checks.
 
 `PLAN.md` is source control-plane state, not part of the npm package. Keep it current when work remains or release handoff state matters.
 
@@ -27,6 +28,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 - GitHub repo: `https://github.com/Tiziano-AI/pi-multiagent`
 - npm package: `pi-multiagent`
 - Pi extension path: `extensions/multiagent/index.ts`
+- Pi skill path: `skills/pi-multiagent/SKILL.md`
 - public tool: `agent_team`
 - bundled package agents: `agents/*.md`
 
@@ -60,6 +62,10 @@ Pi integration depends on installed Pi extension semantics. Re-read installed Pi
 - installed runtime under `/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/`
 
 Do not patch or edit Pi vendor code.
+
+## Skill ownership
+
+The `pi-multiagent` skill is owned by this repository and is included through `package.json` `pi.skills`. It teaches when and how to invoke the package tool and points to canonical docs for deeper context. The bundled `agents/*.md` files are not Pi skills; they are `agent_team` library prompts surfaced as `package:name` refs.
 
 ## Validation gates
 
@@ -108,13 +114,14 @@ Do not commit credentials, `.npmrc`, `.env*`, local Pi config, generated tarball
 
 ## Documentation alignment checklist
 
-When behavior, schema, package metadata, bundled agent prompts, install paths, validation gates, or release flow changes, update all relevant surfaces in the same pass:
+When behavior, schema, package metadata, package skill text, bundled agent prompts, install paths, validation gates, or release flow changes, update all relevant surfaces in the same pass:
 
 - `VISION.md` for product intent changes.
 - `README.md` for user/operator behavior.
 - `ARCH.md` for runtime contracts and ownership.
 - `AGENTS.md` for repo-local agent procedure and invariants.
 - `package.json` for package metadata and npm file inclusion.
+- `skills/pi-multiagent/SKILL.md` for model-facing invocation guidance.
 - `agents/*.md` for package-agent behavior.
 - `tests/` for executable expectations.
 - `PLAN.md` for remaining work or handoff state.

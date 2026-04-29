@@ -17,12 +17,19 @@ Human-authored Markdown agent files are only a reusable library. They are not re
 - source repo: `/Users/tiziano/Code/pi-multiagent`
 - GitHub repo: `https://github.com/Tiziano-AI/pi-multiagent`
 - npm package: `pi-multiagent`
-- Pi package manifest: `package.json` `pi.extensions`
+- Pi package manifest: `package.json` `pi.extensions` and `pi.skills`
 - extension path: `extensions/multiagent/index.ts`
 - public tool: `agent_team`
+- package-owned skill: `skills/pi-multiagent/SKILL.md`
 - bundled reusable agents: `agents/*.md`
 
 Runtime package installs under `~/.pi/agent/` or project `.pi/` settings are integration mountpoints, not source owners.
+
+## Canonical docs and skill
+
+The canonical docs are `AGENTS.md`, `VISION.md`, `README.md`, and `ARCH.md`. The package-owned skill at `skills/pi-multiagent/SKILL.md` is a progressive-disclosure operating guide for agents deciding how to invoke, design, review, or troubleshoot `agent_team` graphs. It points back to the canonical docs rather than duplicating the full architecture.
+
+The bundled `agents/*.md` files are not Pi skills. They are reusable `agent_team` library prompts surfaced as `package:name` refs during catalog/run calls.
 
 ## Public contract owner
 
@@ -259,4 +266,4 @@ pnpm run check:source-size
 pnpm run gate
 ```
 
-`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, and `PLAN.md`.
+`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, the package-owned skill, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, and `PLAN.md`.
