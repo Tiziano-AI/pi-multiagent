@@ -1,6 +1,6 @@
 {
   "name": "pi-multiagent",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "type": "module",
   "description": "Pi package for bounded multi-agent delegation through isolated child Pi processes.",
   "keywords": [
