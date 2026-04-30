@@ -2,7 +2,7 @@
 
 ## Role
 
-`pi-multiagent` is a Pi package for isolated same-session delegation.
+`pi-multiagent` is a Pi package for bounded multi-agent delegation from the current parent conversation.
 
 The package exposes one tool:
 
@@ -10,7 +10,7 @@ The package exposes one tool:
 
 `agent_team` lets the caller define temporary inline agents, use source-qualified library agents, express work as dependency steps, and request synthesis.
 
-Delegated agents run as isolated child Pi processes with `--mode json -p --no-session --no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes`.
+Delegated agents run as isolated child Pi processes with `--mode json -p --no-session --no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes`. Children do not inherit the parent session.
 
 The child launch also passes an empty `--system-prompt` to suppress project `SYSTEM.md` discovery while preserving Pi's default coding prompt, appends the generated subagent prompt through `--append-system-prompt`, and sends the delegated task over stdin rather than argv.
 
@@ -31,17 +31,21 @@ Human-authored Markdown agent files are only a reusable library. They are not re
 
 Runtime package installs under `~/.pi/agent/` or project `.pi/` settings are integration mountpoints, not source owners.
 
-## Canonical docs and skill
+## Canonical docs and package corpus
 
-The canonical docs are `AGENTS.md`, `VISION.md`, `README.md`, and `ARCH.md`. The package-owned skill at `skills/pi-multiagent/SKILL.md` is a progressive-disclosure operating guide for agents deciding how to invoke, design, review, or troubleshoot `agent_team` graphs. It points back to the canonical docs rather than duplicating the full architecture.
+The canonical public docs are `README.md`, `VISION.md`, `ARCH.md`, and `AGENTS.md`. `README.md` is the front-facing operator/evaluator guide, `VISION.md` owns product intent and non-goals, `ARCH.md` owns the normative runtime contract, and `AGENTS.md` owns repo-local work rules.
+
+The canonical package corpus also includes `skills/pi-multiagent/SKILL.md`, `skills/pi-multiagent/references/graph-cookbook.md`, `examples/graphs/*.json`, `agents/*.md`, `package.json`, and relevant tests. Keep these surfaces synchronized when behavior, schema, package metadata, package skill text, examples, validation gates, or release flow changes.
+
+The package-owned skill is a progressive-disclosure operating guide for agents deciding how to invoke, design, review, or troubleshoot `agent_team` graphs. It points back to the canonical docs rather than duplicating the full architecture.
 
 The bundled `agents/*.md` files are not Pi skills. They are reusable `agent_team` library prompts surfaced as `package:name` refs during catalog/run calls.
 
-The graph cookbook lives in README copy, the package-owned skill reference, and `examples/graphs/*.json`. These examples must remain schema-valid `agent_team` inputs, but they are documentation artifacts: callers copy and adapt them rather than invoking a separate template action.
+The graph cookbook lives in the package-owned skill reference and `examples/graphs/*.json`, with README carrying only a concise front-door summary. These examples must remain schema-valid `agent_team` inputs, but they are documentation artifacts: callers copy and adapt them rather than invoking a separate template action.
 
 ## Public contract owner
 
-The canonical process edge is `agent_team` input in `extensions/multiagent/src/schemas.ts`. Runtime normalization and denial live in `extensions/multiagent/src/planning.ts`, `extensions/multiagent/src/library-policy.ts`, `extensions/multiagent/src/agents.ts`, `extensions/multiagent/src/handoff.ts`, and `extensions/multiagent/src/delegation.ts`.
+The canonical process edge is `agent_team` input in `extensions/multiagent/src/schemas.ts`. Runtime normalization and denial live in `extensions/multiagent/src/planning.ts`, `extensions/multiagent/src/graph-file.ts`, `extensions/multiagent/src/library-policy.ts`, `extensions/multiagent/src/agents.ts`, `extensions/multiagent/src/handoff.ts`, and `extensions/multiagent/src/delegation.ts`.
 
 The canonical shape is:
 
@@ -92,7 +96,7 @@ Library source resolution is explicit:
 | `user` | Personal prompts from `${PI_CODING_AGENT_DIR}/agents/*.md`, or `~/.pi/agent/agents/*.md` when the environment variable is unset. | Enabled by default and addressed as `user:name`; denied if the directory resolves inside the current project root. |
 | `project` | Repository prompts from the nearest ancestor project `.pi/agents/*.md`; the global Pi config root `~/.pi` is ignored as a project marker. | Disabled by default and addressed as `project:name`; requires `library.sources` plus `projectAgents` approval/allowance. |
 
-Catalog rejects run-only fields (`objective`, `agents`, `steps`, `synthesis`, `limits`) instead of silently ignoring them. `library.query` is catalog-only; run calls reject it because query filtering does not scope execution. Runtime validation failures render as `# agent_team error` with diagnostics and no normal catalog/run body.
+Catalog rejects run-only fields (`objective`, `graphFile`, `agents`, `steps`, `synthesis`, `limits`) instead of silently ignoring them. `library.query` is catalog-only; run calls reject it because query filtering does not scope execution. Runtime validation failures render as `# agent_team error` with diagnostics and no normal catalog/run body.
 
 Catalog output includes each agent's source-qualified ref, declared tools, thinking level, optional model, description, file path, and SHA-256 prefix. It reports active discovery sources, not denied requested sources, and renders `none` when no source is active. Structured details include the full SHA-256. This lets the caller distinguish package/user/project prompts, choose the right role, and cite provenance. Duplicate frontmatter names across sources are allowed because `package:reviewer`, `user:reviewer`, and `project:reviewer` are different refs.
 
@@ -237,11 +241,11 @@ Structured details include public resolved-agent summaries, catalog entries, per
 
 Per-step assistant output has one owner: `assistantOutput`. It stores inline text up to 100000 characters. When output exceeds that threshold, runtime writes the already-buffered text plus subsequent deltas to a mode `0600` temp artifact, clears inline text, and exposes the exact file path in `assistantOutput.filePath`. There are no parallel `output`, `outputFull`, or per-step `fullOutputPath` fields.
 
-Synthesis and dependent steps receive assistant output inline up to 100000 characters per upstream step. Larger upstream outputs are represented by exact JSON-string temp-file paths so whitespace in temp roots is not compacted, and the copied child output block is left empty. The receiver launch gets `read` automatically when an oversized upstream artifact is needed. A receiver is blocked if an oversized upstream output artifact becomes unreadable. If the aggregate final result exceeds Pi's standard output limit, the aggregate is written to `AgentTeamDetails.fullOutputPath`.
+Synthesis and dependent steps receive assistant output inline up to 100000 characters per upstream step. Larger upstream outputs are represented by exact JSON-string temp-file paths so whitespace in temp roots is not compacted, and the copied child output block is left empty. The receiver launch gets `read` automatically when an oversized upstream artifact is needed. A receiver is blocked if an oversized upstream output artifact becomes unreadable. If the aggregate final result exceeds 2000 lines or 50KB, the aggregate is written to `AgentTeamDetails.fullOutputPath` when possible.
 
-Resource caps are part of the public contract: graph files are bounded at 256 KiB, child JSON stdout lines are bounded at 1000000 characters, inline upstream handoff is 100000 characters per upstream step, per-step retained events are capped at 40 entries with an `events-truncated` marker, per-event previews are capped at 2000 characters including marker text, stderr previews are capped, and caller text fields have schema max lengths. Text decoding uses streaming UTF-8 decoders so split multibyte characters are not corrupted.
+Resource caps are part of the public contract: graph files are bounded at 256 KiB, child JSON stdout lines are bounded at 1000000 characters, inline upstream handoff is 100000 characters per upstream step, model-facing aggregate output is capped at 2000 lines or 50KB before full-output spill, per-step retained events are capped at 40 entries with an `events-truncated` marker, per-event previews are capped at 2000 characters including marker text, stderr previews are capped, and caller text fields have schema max lengths. Text decoding uses streaming UTF-8 decoders so split multibyte characters are not corrupted.
 
-Subagent stdout, raw stderr, malformed stdout diagnostics, model text, tool previews, catalog metadata, output files, and failure fields are same-session evidence. Structured details and artifacts preserve captured evidence as observed except for file spill, bounded previews, and aggregate truncation. Model-facing output blocks escape delimiter-like line starts; inline summaries and metadata lines compact whitespace for display. Failed and blocked steps render the terminal reason, first observed cause, and structured failure provenance even when partial assistant output exists; upstream handoffs include those failure facts outside copied or omitted output. Oversized-output handoffs place the exact artifact path as parent metadata and leave the copied child output block empty. For caller-agent triage, model-facing provenance orders JSON-stringed `likely_root`, `first_observed`, `closeout`, and `failure_terminated` before lower-priority process facts; child-controlled assistant error text cannot reclassify a trusted parent/process failure prefix.
+Subagent stdout, raw stderr, malformed stdout diagnostics, model text, tool previews, catalog metadata, output files, and failure fields are captured evidence for the current parent conversation. Structured details and artifacts preserve captured evidence as observed except for file spill, bounded previews, and aggregate truncation. Model-facing output blocks escape delimiter-like line starts; inline summaries and metadata lines compact whitespace for display. Failed and blocked steps render the terminal reason, first observed cause, and structured failure provenance even when partial assistant output exists; upstream handoffs include those failure facts outside copied or omitted output. Oversized-output handoffs place the exact artifact path as parent metadata and leave the copied child output block empty. For caller-agent triage, model-facing provenance orders JSON-stringed `likely_root`, `first_observed`, `closeout`, and `failure_terminated` before lower-priority process facts; child-controlled assistant error text cannot reclassify a trusted parent/process failure prefix.
 
 Temp assistant-output and aggregate files are retained because they are evidence artifacts for the caller. The caller owns cleanup after use. Mode `0600` temp files protect against other users, not against same-UID processes or untrusted children with filesystem-capable tools such as `read`, `grep`, `find`, `ls`, or `bash`. Automatic oversized-output handoff adds `read` to the receiver, so it is a prompt-level handoff control, not an OS sandbox. Temp-file write failures remove the just-created temp directory when possible while preserving the original write failure. Assistant-output artifact write failures fail the producing step; aggregate-output write failures are reported as parent diagnostics while preserving bounded model output and completed step evidence.
 
@@ -275,4 +279,4 @@ pnpm run check:source-size
 pnpm run gate
 ```
 
-`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. Unit tests include graph-cookbook example validation so `examples/graphs/*.json` remains parseable and resolvable against bundled package agents. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, examples, the package-owned skill and references, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, `CONTINUE.md`, `PLAN.md`, and `HANDOFF.md`. `check:public-docs` rejects machine-local public copy, stale pinned GitHub install tags, unsupported release-proof fields, broken relative Markdown links, and static package-agent catalog tables that should come from runtime catalog output.
+`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. Unit tests include graph-cookbook example validation so `examples/graphs/*.json` remains parseable and resolvable against bundled package agents. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, examples, the package-owned skill and references, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, `CONTINUE.md`, `PLAN.md`, and `HANDOFF.md`. `check:public-docs` rejects machine-local public copy, stale pinned GitHub install tags, broken relative Markdown links, missing public-contract invariants, and static package-agent catalog tables that should come from runtime catalog output.

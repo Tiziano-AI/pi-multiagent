@@ -22,14 +22,14 @@ export default function multiagentExtension(pi: ExtensionAPI) {
 		name: "agent_team",
 		label: "Agent Team",
 		description: [
-			"Run isolated Pi subagents for same-session delegation.",
+			"Run isolated child Pi processes for bounded delegation from the current parent conversation.",
 			'Use action "catalog" to list reusable package, user, or project agents.',
 			'Use action "run" to execute inline agents or source-qualified library agents as dependency steps, with optional synthesis.',
 			"Child processes launch without sessions, extensions, context files, skills, prompt templates, themes, or project SYSTEM.md. Include required repo instructions in the delegated task.",
 			"Inline agents default to no tools. Library agents use their declared tools unless overridden. Use refs such as package:reviewer.",
 			`Large output is truncated to ${describeOutputLimit()}; full aggregate or step output may be saved to temp files in the result.`,
 		].join(" "),
-		promptSnippet: "Run isolated Pi subagents with inline agents, library agents, dependency steps, and synthesis.",
+		promptSnippet: "Run isolated child Pi processes with inline agents, library agents, dependency steps, and synthesis.",
 		promptGuidelines: [
 			"Use agent_team when separate context improves reconnaissance, critique, implementation, review, or synthesis.",
 			"Prefer inline agents for task-specific roles. Use catalog only when reusable library agents may help.",

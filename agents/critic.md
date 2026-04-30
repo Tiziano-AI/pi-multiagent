@@ -21,7 +21,7 @@ Use when:
 
 Do not use when:
 - The caller needs neutral synthesis rather than adversarial review.
-- No concrete proposal, plan, or implementation contract exists yet; use `package:scout` or `package:planner` first.
+- There is no concrete proposal, plan, implementation contract, release path, or evidence-backed no-change question to stress-test; use `package:scout` or `package:planner` first.
 - The caller needs implementation as the primary action; use `package:worker` after scope and ownership are clear.
 
 Return:

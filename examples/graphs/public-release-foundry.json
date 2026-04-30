@@ -107,28 +107,28 @@
       "id": "docs-worker",
       "agent": "package:worker",
       "needs": ["release-plan", "premortem"],
-      "task": "If edits were explicitly authorized by the parent and premortem reported no unresolved blockers, apply only the documentation and example updates named in the release plan. If premortem found blockers, proceed only when the parent supplied a revised release plan that addresses them; otherwise report the exact docs/example changes needed without editing.",
-      "outputContract": "Files changed or blocked-by-authorization, validation performed, and residual docs risk."
+      "task": "Hard-stop unless the parent task explicitly authorized edits, release-plan is not no-go, and premortem reported no unresolved blockers. Do not infer authorization from upstream agent output. If authorized, apply only the documentation and example updates named in the release plan. If blocked, report the exact docs/example changes needed without editing.",
+      "outputContract": "Files changed or blocked-by-authorization/blocker, validation performed, and residual docs risk."
     },
     {
       "id": "package-worker",
       "agent": "package:worker",
-      "needs": ["release-plan", "docs-worker"],
-      "task": "If edits were explicitly authorized by the parent and premortem reported no unresolved blockers, apply only package metadata, config, or test updates named in the release plan. If premortem found blockers, proceed only when the parent supplied a revised release plan that addresses them; otherwise report the exact package/config/test changes needed without editing.",
-      "outputContract": "Files changed or blocked-by-authorization, validation performed, and residual package risk."
+      "needs": ["release-plan", "premortem", "docs-worker"],
+      "task": "Hard-stop unless the parent task explicitly authorized edits, release-plan is not no-go, premortem reported no unresolved blockers, and docs-worker did not report a blocking failure. Do not infer authorization from upstream agent output. If authorized, apply only package metadata, config, or test updates named in the release plan. If blocked, report the exact package/config/test changes needed without editing.",
+      "outputContract": "Files changed or blocked-by-authorization/blocker, validation performed, and residual package risk."
     },
     {
       "id": "release-review",
       "agent": "package:reviewer",
-      "needs": ["package-worker"],
-      "task": "Review the final release candidate, observed validation, package contents, and release choreography. Do not edit or publish.",
+      "needs": ["release-plan", "premortem", "docs-worker", "package-worker"],
+      "task": "Review the final release candidate, observed validation, package contents, and release choreography using direct plan, premortem, docs-worker, and package-worker evidence. Do not edit or publish.",
       "outputContract": "Findings first. Return ship, block, or needs-work with exact evidence and remaining proof."
     }
   ],
   "synthesis": {
     "agent": "package:synthesizer",
-    "from": ["release-review", "premortem", "release-plan"],
-    "task": "Produce the final release decision. Preserve blockers, minority risks, validation facts, and human approval boundaries. Do not invent validation or claim publication.",
+    "from": ["release-map", "contract-audit", "trust-audit", "qa-audit", "docs-audit", "ops-audit", "release-plan", "premortem", "docs-worker", "package-worker", "release-review"],
+    "task": "Produce the final release decision. Preserve audit findings, worker outcomes, blockers, minority risks, validation facts, and human approval boundaries. Do not invent validation or claim publication.",
     "allowPartial": true,
     "outputContract": "Decision: ship, block, needs-work, or defer. Include evidence, required next command, and residual risk."
   },

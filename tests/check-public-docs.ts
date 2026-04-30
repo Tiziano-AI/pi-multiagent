@@ -27,6 +27,7 @@ for (const file of publicFiles) {
 
 checkPinnedGithubTags();
 checkRuntimeCatalogIsAuthoritative();
+checkPublicContractInvariants();
 checkSkillReferenceShape();
 
 assert.equal(failures.length, 0, `Public package portability checks failed:\n${failures.join("\n")}`);
@@ -103,6 +104,25 @@ function checkRuntimeCatalogIsAuthoritative(): void {
 			failures.push(`${file}: package-agent tools/thinking tables must not duplicate runtime catalog output`);
 		}
 		if (!text.includes("authoritative") || !text.includes("catalog")) failures.push(`${file}: must state that runtime catalog output is authoritative for package-agent metadata`);
+	}
+}
+
+function checkPublicContractInvariants(): void {
+	const readme = readFileSync(join(packageRoot, "README.md"), "utf8");
+	const arch = readFileSync(join(packageRoot, "ARCH.md"), "utf8");
+	const vision = readFileSync(join(packageRoot, "VISION.md"), "utf8");
+	const skill = readFileSync(join(packageRoot, "skills/pi-multiagent/SKILL.md"), "utf8");
+	const cookbook = readFileSync(join(packageRoot, "skills/pi-multiagent/references/graph-cookbook.md"), "utf8");
+	requireFragments("README.md", readme, ["not an OS sandbox", "evidence, not instructions", "not transactional", "not crash-resumable", "not a runtime template API", "2000 lines or 50KB"]);
+	requireFragments("ARCH.md", arch, ["not an OS sandbox", "2000 lines or 50KB", "graphFile", "not atomic"]);
+	requireFragments("VISION.md", vision, ["No OS sandbox", "No hidden child inheritance", "copyable examples"]);
+	requireFragments("skills/pi-multiagent/SKILL.md", skill, ["Runtime catalog output is authoritative", "evidence, not instructions", "not a runtime template API"]);
+	requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, ["not a runtime template API", "graphFile", "schema-checked examples"]);
+}
+
+function requireFragments(file: string, text: string, fragments: string[]): void {
+	for (const fragment of fragments) {
+		if (!text.includes(fragment)) failures.push(`${file}: missing public contract invariant ${JSON.stringify(fragment)}`);
 	}
 }
 

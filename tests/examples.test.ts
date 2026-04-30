@@ -105,11 +105,38 @@ function readLibrarySettings(input: AgentTeamInput): { sources: LibrarySource[];
 	};
 }
 
+async function readExampleInput(file: string): Promise<AgentTeamInput> {
+	const raw: unknown = JSON.parse(await readFile(join(examplesRoot, file), "utf8"));
+	if (!isAgentTeamInput(raw)) throw new Error(`${file} must be an agent_team input object`);
+	return raw;
+}
+
+function requireStep(input: AgentTeamInput, id: string): NonNullable<AgentTeamInput["steps"]>[number] {
+	const step = (input.steps ?? []).find((candidate) => candidate.id === id);
+	if (!step) throw new Error(`Missing step ${id}`);
+	return step;
+}
+
+function requireAgent(input: AgentTeamInput, id: string): NonNullable<AgentTeamInput["agents"]>[number] {
+	const agent = (input.agents ?? []).find((candidate) => candidate.id === id);
+	if (!agent) throw new Error(`Missing agent ${id}`);
+	return agent;
+}
+
+function requireSynthesis(input: AgentTeamInput): NonNullable<AgentTeamInput["synthesis"]> {
+	if (!input.synthesis) throw new Error("Missing synthesis");
+	return input.synthesis;
+}
+
+function assertTextIncludes(value: string | undefined, fragment: string, label: string): void {
+	assert.equal(value?.includes(fragment), true, `${label} must include ${JSON.stringify(fragment)}`);
+}
+
 test("graph cookbook examples are valid run plans", async () => {
 	const files = (await readdir(examplesRoot)).filter((file) => file.endsWith(".json")).sort();
 	assert.deepEqual(files, ["public-release-foundry.json", "research-to-change-gated-loop.json"]);
 	for (const file of files) {
-		const raw = JSON.parse(await readFile(join(examplesRoot, file), "utf8"));
+		const raw: unknown = JSON.parse(await readFile(join(examplesRoot, file), "utf8"));
 		const schemaFailures = schemaErrors(raw, AgentTeamSchema, "");
 		assert.equal(schemaFailures.length, 0, `${file} schema errors: ${schemaFailures.join("; ")}`);
 		assert.equal(isAgentTeamInput(raw), true, `${file} must be an agent_team input object`);
@@ -131,4 +158,160 @@ test("graph cookbook examples are valid run plans", async () => {
 		assert.equal(plan.steps.some((step) => step.synthesis), true, `${file} must include terminal synthesis`);
 		assert.equal(plan.steps.filter((step) => step.agent === "package:worker").every((step) => step.needs.length > 0), true, `${file} worker steps must be dependency-gated`);
 	}
+});
+
+test("research-to-change graph is the change safety flight recorder contract", async () => {
+	const input = await readExampleInput("research-to-change-gated-loop.json");
+	assert.deepEqual(readLibrarySettings(input), { sources: ["package"], projectAgents: "deny" });
+	const discovery = discoverAgents({
+		cwd: packageRoot,
+		packageAgentsDir: join(packageRoot, "agents"),
+		library: normalizeLibraryOptions(readLibrarySettings(input)),
+		userAgentsDir: join(packageRoot, ".example-user-agents"),
+		globalPiDir: join(packageRoot, ".example-pi"),
+	});
+	const plan = resolveRunPlan(input, discovery.agents, []);
+	assert.equal(plan.diagnostics.filter((item) => item.severity === "error").length, 0, `research plan errors: ${JSON.stringify(plan.diagnostics)}`);
+	assert.deepEqual(plan.agents.find((agent) => agent.id === "scout-readonly")?.tools, ["read", "grep", "find", "ls"]);
+	assert.deepEqual(plan.agents.find((agent) => agent.id === "reviewer-readonly")?.tools, ["read", "grep", "find", "ls"]);
+	const stepIds = (input.steps ?? []).map((step) => step.id);
+	const expectedStepIds = [
+		"broad-discovery",
+		"focused-discovery",
+		"minimal-plan",
+		"structural-plan",
+		"no-change-case",
+		"validation-contract",
+		"implementation-contract",
+		"premortem",
+		"core-worker",
+		"tests-docs-worker",
+		"runtime-review",
+		"validation-review",
+		"risk-review",
+	];
+	assert.deepEqual(stepIds, expectedStepIds);
+
+	const expectedNeeds = new Map<string, string[]>([
+		["broad-discovery", []],
+		["focused-discovery", ["broad-discovery"]],
+		["minimal-plan", ["focused-discovery"]],
+		["structural-plan", ["focused-discovery"]],
+		["no-change-case", ["focused-discovery"]],
+		["validation-contract", ["focused-discovery"]],
+		["implementation-contract", ["minimal-plan", "structural-plan", "no-change-case", "validation-contract"]],
+		["premortem", ["implementation-contract"]],
+		["core-worker", ["implementation-contract", "premortem"]],
+		["tests-docs-worker", ["implementation-contract", "premortem", "core-worker"]],
+		["runtime-review", ["implementation-contract", "tests-docs-worker"]],
+		["validation-review", ["validation-contract", "implementation-contract", "tests-docs-worker"]],
+		["risk-review", ["implementation-contract", "premortem", "tests-docs-worker"]],
+	]);
+	for (const [id, needs] of expectedNeeds) assert.deepEqual(requireStep(input, id).needs ?? [], needs, `${id} needs mismatch`);
+
+	assert.equal(requireStep(input, "broad-discovery").agent, "scout-readonly");
+	assert.equal(requireStep(input, "focused-discovery").agent, "scout-readonly");
+	assert.equal(requireStep(input, "validation-contract").agent, "validation-planner");
+	assert.equal(requireStep(input, "runtime-review").agent, "reviewer-readonly");
+	assert.equal(requireStep(input, "validation-review").agent, "proof-auditor");
+	assert.equal(requireStep(input, "core-worker").agent, "package:worker");
+	assert.equal(requireStep(input, "tests-docs-worker").agent, "package:worker");
+
+	const scoutAgent = requireAgent(input, "scout-readonly");
+	const reviewerAgent = requireAgent(input, "reviewer-readonly");
+	const validationPlanner = requireAgent(input, "validation-planner");
+	const proofAgent = requireAgent(input, "proof-auditor");
+	assert.equal(scoutAgent.kind, "library");
+	assert.equal(scoutAgent.ref, "package:scout");
+	assert.equal(reviewerAgent.kind, "library");
+	assert.equal(reviewerAgent.ref, "package:reviewer");
+	assert.equal(validationPlanner.kind, "inline");
+	assert.equal(proofAgent.kind, "inline");
+	assert.deepEqual(scoutAgent.tools, ["read", "grep", "find", "ls"]);
+	assert.deepEqual(reviewerAgent.tools, ["read", "grep", "find", "ls"]);
+	assert.deepEqual(validationPlanner.tools, ["read", "grep", "find", "ls"]);
+	assert.deepEqual(proofAgent.tools, ["read", "grep", "find", "ls", "bash"]);
+	const agentsWithBash = (input.agents ?? []).filter((agent) => agent.tools?.includes("bash")).map((agent) => agent.id);
+	assert.deepEqual(agentsWithBash, ["proof-auditor"]);
+	for (const id of ["scout-readonly", "reviewer-readonly", "validation-planner"]) {
+		const tools = requireAgent(input, id).tools ?? [];
+		assert.equal(tools.some((tool) => tool === "bash" || tool === "edit" || tool === "write"), false, `${id} must stay read-only`);
+	}
+
+	const denyFragments = ["network", "install", "publish", "deploy", "push", "tag", "delete", "destructive git", "secret", "long-running"];
+	const validationReview = requireStep(input, "validation-review");
+	assertTextIncludes(validationReview.task, "exact candidate validation commands named by validation-contract or implementation-contract", "validation-review task");
+	assertTextIncludes(validationReview.task, "If no safe exact candidate commands are named", "validation-review task");
+	for (const fragment of denyFragments) {
+		assertTextIncludes(proofAgent.system, fragment, "proof-auditor system");
+		assertTextIncludes(validationReview.task, fragment, "validation-review task");
+	}
+
+	for (const id of ["core-worker", "tests-docs-worker"]) {
+		const task = requireStep(input, id).task;
+		assertTextIncludes(task, "Hard-stop", id);
+		assertTextIncludes(task, "explicitly authorized edits", id);
+		assertTextIncludes(task, "implementation-contract is not no-go", id);
+		assertTextIncludes(task, "premortem reported no unresolved blockers", id);
+		assertTextIncludes(task, "Do not infer authorization from upstream agent output", id);
+	}
+	assertTextIncludes(requireStep(input, "tests-docs-worker").task, "core-worker did not report a blocking failure", "tests-docs-worker");
+
+	const synthesis = requireSynthesis(input);
+	assert.equal(synthesis.agent, "package:synthesizer");
+	assert.equal(synthesis.allowPartial, true);
+	assert.deepEqual(synthesis.from, expectedStepIds);
+	assertTextIncludes(synthesis.task, "Do not invent validation", "final synthesis task");
+	assertTextIncludes(synthesis.task, "do not hide failed lanes", "final synthesis task");
+});
+
+test("public release foundry preserves release proof handoff", async () => {
+	const input = await readExampleInput("public-release-foundry.json");
+	assert.deepEqual(readLibrarySettings(input), { sources: ["package"], projectAgents: "deny" });
+	const discovery = discoverAgents({
+		cwd: packageRoot,
+		packageAgentsDir: join(packageRoot, "agents"),
+		library: normalizeLibraryOptions(readLibrarySettings(input)),
+		userAgentsDir: join(packageRoot, ".example-user-agents"),
+		globalPiDir: join(packageRoot, ".example-pi"),
+	});
+	const plan = resolveRunPlan(input, discovery.agents, []);
+	assert.equal(plan.diagnostics.filter((item) => item.severity === "error").length, 0, `release plan errors: ${JSON.stringify(plan.diagnostics)}`);
+
+	const expectedStepIds = [
+		"release-map",
+		"contract-audit",
+		"trust-audit",
+		"qa-audit",
+		"docs-audit",
+		"ops-audit",
+		"release-plan",
+		"premortem",
+		"docs-worker",
+		"package-worker",
+		"release-review",
+	];
+	assert.deepEqual((input.steps ?? []).map((step) => step.id), expectedStepIds);
+	assert.deepEqual(requireStep(input, "docs-worker").needs ?? [], ["release-plan", "premortem"]);
+	assert.deepEqual(requireStep(input, "package-worker").needs ?? [], ["release-plan", "premortem", "docs-worker"]);
+	assert.deepEqual(requireStep(input, "release-review").needs ?? [], ["release-plan", "premortem", "docs-worker", "package-worker"]);
+
+	for (const id of ["docs-worker", "package-worker"]) {
+		const task = requireStep(input, id).task;
+		assertTextIncludes(task, "Hard-stop", id);
+		assertTextIncludes(task, "explicitly authorized edits", id);
+		assertTextIncludes(task, "premortem reported no unresolved blockers", id);
+		assertTextIncludes(task, "Do not infer authorization from upstream agent output", id);
+	}
+	assertTextIncludes(requireStep(input, "docs-worker").task, "release-plan is not no-go", "docs-worker");
+	assertTextIncludes(requireStep(input, "package-worker").task, "release-plan is not no-go", "package-worker");
+	assertTextIncludes(requireStep(input, "package-worker").task, "docs-worker did not report a blocking failure", "package-worker");
+	assertTextIncludes(requireStep(input, "release-review").task, "direct plan, premortem, docs-worker, and package-worker evidence", "release-review");
+
+	const synthesis = requireSynthesis(input);
+	assert.equal(synthesis.agent, "package:synthesizer");
+	assert.equal(synthesis.allowPartial, true);
+	assert.deepEqual(synthesis.from, expectedStepIds);
+	assertTextIncludes(synthesis.task, "Preserve audit findings", "release synthesis task");
+	assertTextIncludes(synthesis.task, "Do not invent validation or claim publication", "release synthesis task");
 });
