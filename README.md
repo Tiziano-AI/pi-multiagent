@@ -52,6 +52,7 @@ After installing in a running Pi session, use `/reload`.
 | `agent_team` | Model-facing tool for catalog and run calls. |
 | `/skill:pi-multiagent` | Usage guidance loaded on demand. |
 | `agents/*.md` | Reusable library agents addressed as `package:name`. |
+| `examples/graphs/*.json` | Copyable graph-cookbook templates. |
 | `README.md` | Operator guide. |
 | `ARCH.md` | Runtime contract and trust boundaries. |
 | `VISION.md` | Product intent and non-goals. |
@@ -70,7 +71,7 @@ Bundled agents are not Pi skills. They are prompts for `agent_team` library refs
   "action": "catalog",
   "library": {
     "sources": ["package", "user"],
-    "query": "review tests"
+    "query": "review"
   }
 }
 ```
@@ -119,6 +120,17 @@ Bundled agents are not Pi skills. They are prompts for `agent_team` library refs
 }
 ```
 
+A run can also load the complete graph from a checked-in JSON file:
+
+```json
+{
+  "action": "run",
+  "graphFile": "examples/graphs/research-to-change-gated-loop.json"
+}
+```
+
+`graphFile` is mutually exclusive with inline run fields. It must be a relative `.json` path to a regular file inside the current working directory; nested `graphFile` wrappers and symlinks are denied.
+
 A run can use:
 
 - inline agents created for one call
@@ -157,7 +169,7 @@ The authoritative package-agent catalog is runtime output. Query it before choos
   "action": "catalog",
   "library": {
     "sources": ["package"],
-    "query": "review validation"
+    "query": "review"
   }
 }
 ```
@@ -185,14 +197,83 @@ Library discovery is source-qualified and path-based:
 
 Project agents are denied by default because they are repository-controlled prompts. `projectAgents: "confirm"` asks through Pi UI and fails closed without UI; `projectAgents: "allow"` should be used only for trusted repositories.
 
+## Graph cookbook
+
+The cookbook is a set of schema-checked starting graphs, not a runtime template API. Copy a JSON file, run catalog to verify any library refs in your environment, then replace the objective, tasks, and output contracts for your work. When the resulting graph is easier to review as a file than as inline tool arguments, invoke it with `graphFile`.
+
+Use these graph rules for every template:
+
+- call catalog before choosing reusable package, user, or project agents;
+- use a focused catalog query such as `review`, `plan`, or `synthesis`; query matching is substring-based, not multi-keyword search;
+- keep read-only discovery and review lanes parallel;
+- use a normal `package:synthesizer` step for non-terminal fan-in when later steps need the merged contract;
+- reserve top-level `synthesis` for final fan-in;
+- serialize `package:worker` or other write-capable steps unless ownership is provably disjoint;
+- use `synthesis.allowPartial: true` only for final triage over independent lanes, not to greenlight failed implementation.
+
+### Research-to-Change Gated Loop
+
+Example: [`examples/graphs/research-to-change-gated-loop.json`](examples/graphs/research-to-change-gated-loop.json)
+
+Use when the request is ambiguous and the safe path is not yet known. The graph stages broad discovery, focused discovery, competing minimal/structural/no-change plans, a non-terminal implementation-contract synthesis, pre-mortem, serialized authorized workers, parallel review, and final decision synthesis.
+
+Core choreography:
+
+```text
+broad-discovery
+  -> focused-discovery
+  -> minimal-plan + structural-plan + no-change-case
+  -> implementation-contract
+  -> premortem
+  -> core-worker
+  -> tests-docs-worker
+  -> runtime-review + validation-review + risk-review
+  -> final synthesis
+```
+
+Why it is powerful:
+
+- prevents premature edits by forcing evidence and competing hypotheses first;
+- makes the implementation contract an explicit graph artifact;
+- serializes side effects through worker dependencies;
+- separates runtime review, validation/docs review, and adversarial risk review;
+- produces an accept/repair/block/defer decision with preserved conflicts.
+
+### Public Release Foundry
+
+Example: [`examples/graphs/public-release-foundry.json`](examples/graphs/public-release-foundry.json)
+
+Use when a package, extension, CLI, or public artifact needs release-quality proof. The graph maps release surfaces, runs independent contract/trust/QA/docs/ops audits, plans release readiness, stress-tests the plan, serializes authorized update workers, performs final release review, and synthesizes a ship/block/needs-work/defer decision.
+
+Core choreography:
+
+```text
+release-map
+  -> contract-audit + trust-audit + qa-audit + docs-audit + ops-audit
+  -> release-plan
+  -> premortem
+  -> docs-worker
+  -> package-worker
+  -> release-review
+  -> final synthesis
+```
+
+Why it is powerful:
+
+- turns release into a provenance chain instead of a checklist memory test;
+- uses independent audit lanes before write-capable work;
+- keeps publication, pushing, tagging, and destructive actions behind explicit human approval;
+- validates public copy, package contents, release commands, and proof artifacts together;
+- showcases catalog refs, inline specialists, dependency graphs, bounded bash validation, serialized side effects, and final synthesis.
+
 ## Handoff
 
 Upstream step output is appended to dependent tasks as untrusted evidence. It is not an instruction source. If a downstream agent must follow something, put it in that step's `task` or `outputContract`.
 
 There are no caller-selected handoff modes. For each upstream step, `agent_team` automatically:
 
-1. copies the full captured assistant output inline when it is at most 100000 characters;
-2. persists larger captured output to a mode `0600` temp file;
+1. copies assistant output inline when it is at most 100000 characters;
+2. persists larger assistant output to a mode `0600` temp file;
 3. passes the exact JSON-string file path to the receiver; and
 4. launches that receiver with `read` when it needs to dereference oversized upstream artifacts.
 
@@ -237,11 +318,11 @@ The result includes:
 - step status summary
 - step output blocks
 - diagnostics
-- temp-file paths for oversized output when needed
+- temp-file paths for oversized step output or aggregate truncation when needed
 
-Output is preserved as evidence apart from bounded capture, truncation, and delimiter-safe rendering. `agent_team` does not rewrite subagent text.
+Output is preserved as evidence apart from file spill, aggregate truncation, and delimiter-safe rendering. `agent_team` does not rewrite subagent text.
 
-Failures keep parent-observed facts separate from child-authored text. Failed and blocked steps include a reason, a first observed cause, and structured provenance. Provenance puts the likely root, first observed cause, closeout, and termination flag first so the calling agent can triage without reading every event.
+Failures keep parent-observed facts separate from child-authored text. Failed and blocked steps include a reason, a first observed cause, and structured provenance. Provenance puts the likely root, first observed cause, closeout, and termination flag first so the calling agent can triage without reading every event. Retryable child Pi provider errors are allowed to auto-retry inside the child process; retry lifecycle events are retained as diagnostics.
 
 `agent_team` is not transactional and not crash-resumable. Child edits are real workspace changes. If a run crashes or times out, inspect the workspace before retrying side-effectful work.
 
@@ -255,8 +336,8 @@ Failures keep parent-observed facts separate from child-authored text. Failed an
 | Synthesis fan-in | 16 |
 | Concurrency | 1 to 6; default 6 |
 | Per-step timeout | 1 to 3600 seconds; optional; no default |
-| Inline upstream handoff | 100000 chars per upstream step |
-| Per-step assistant output capture | 200000 chars; larger output fails closed |
+| Inline upstream handoff | 100000 chars per upstream step; larger output uses a mode `0600` file artifact |
+| Graph file input | Relative `.json` file inside cwd; 256 KiB max |
 | Retained step events | 40 |
 | Per-event preview | 2000 chars |
 | JSON stdout line buffer | 1000000 chars |
@@ -272,7 +353,7 @@ npm pack --dry-run --json
 git diff --check
 ```
 
-`pnpm run gate` runs unit tests, a fake Pi smoke test, package-load checks, package-content checks, public-doc portability checks, and source-size checks.
+`pnpm run gate` runs unit tests, graph-cookbook example validation, a fake Pi smoke test, package-load checks, package-content checks, public-doc portability checks, and source-size checks.
 
 ## Reference
 
@@ -280,3 +361,4 @@ git diff --check
 - `VISION.md` defines product intent and non-goals.
 - `AGENTS.md` defines repo-local work rules and release procedure.
 - `skills/pi-multiagent/SKILL.md` is the package-owned skill.
+- `examples/graphs/*.json` contains schema-checked graph-cookbook templates.

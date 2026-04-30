@@ -3,9 +3,9 @@
 import { StringDecoder } from "node:string_decoder";
 import { appendDiagnostic, appendStderr, applyJsonEvent, markMalformedStdout, noteFailureCause, parseJsonRecordLine } from "./json-events.ts";
 import { buildPiArgs, getPiInvocation, type SpawnProcess } from "./child-launch.ts";
+import { MAX_STDOUT_LINE_CHARS } from "./types.ts";
 import type { AgentInvocationDefaults, AgentRunResult, ResolvedAgent, TeamLimits } from "./types.ts";
 
-const MAX_STDOUT_LINE_CHARS = 1_000_000;
 const SIGKILL_CONFIRM_MS = 500;
 const SIGTERM_GRACE_MS = 5_000;
 
@@ -91,43 +91,44 @@ export async function spawnPiJson(options: {
 			terminate();
 			return true;
 		};
-		const failOversizedStdoutLine = () => {
-			buffer = "";
-			failureTerminating = true;
-			if (timeoutTimer) clearTimeout(timeoutTimer);
-			options.result.malformedStdout = true;
-			options.result.errorMessage = `Subagent JSON stdout line exceeded ${MAX_STDOUT_LINE_CHARS} characters.`;
-			noteFailureCause(options.result, options.result.errorMessage);
-			options.onPartial();
-			terminate();
-		};
 		const processStdoutText = (text: string) => {
 			if (settled || firstCause || failureTerminating || text.length === 0) return;
 			if (options.result.protocolTerminal) {
-				buffer = "";
-				noteLateStdout(options.result);
-				options.onPartial();
+				buffer += text;
+				let terminalNewline = buffer.indexOf("\n");
+				while (terminalNewline !== -1) {
+					const line = buffer.slice(0, terminalNewline);
+					buffer = buffer.slice(terminalNewline + 1);
+					processJsonLine(line, options.result, options.onPartial);
+					terminalNewline = buffer.indexOf("\n");
+				}
+				if (buffer.length > MAX_STDOUT_LINE_CHARS) {
+					if (noteLateStdout(options.result)) options.onPartial();
+					buffer = "";
+				}
 				return;
 			}
 			buffer += text;
 			let newline = buffer.indexOf("\n");
+			if (newline === -1 && buffer.length > MAX_STDOUT_LINE_CHARS) {
+				markOversizedStdoutLine(options.result);
+				options.onPartial();
+				terminateForProtocolFailure();
+				return;
+			}
 			while (newline !== -1) {
-				if (newline > MAX_STDOUT_LINE_CHARS) {
-					failOversizedStdoutLine();
-					return;
-				}
 				const line = buffer.slice(0, newline);
 				buffer = buffer.slice(newline + 1);
-				processJsonLine(line, options.result, options.onPartial);
-				if (options.result.protocolTerminal && !shouldTerminateForProtocolFailure(options.result)) {
-					if (buffer.trim().length > 0 && noteLateStdout(options.result)) options.onPartial();
-					buffer = "";
+				if (!options.result.protocolTerminal && line.length > MAX_STDOUT_LINE_CHARS) {
+					markOversizedStdoutLine(options.result);
+					options.onPartial();
+					terminateForProtocolFailure();
 					return;
 				}
+				processJsonLine(line, options.result, options.onPartial);
 				if (settled || firstCause || terminateForProtocolFailure()) return;
 				newline = buffer.indexOf("\n");
 			}
-			if (buffer.length > MAX_STDOUT_LINE_CHARS) failOversizedStdoutLine();
 		};
 		if (options.signal?.aborted) onAbort();
 		else options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -215,23 +216,40 @@ export async function spawnPiJson(options: {
 }
 
 function shouldTerminateForProtocolFailure(result: AgentRunResult): boolean {
-	if (result.outputCaptureTruncated) return true;
+	if (result.errorMessage?.startsWith("Subagent assistant output artifact persistence failed:")) return true;
+	if (result.errorMessage?.startsWith("Subagent JSON stdout line exceeded")) return true;
+	if (result.errorMessage === "Subagent emitted malformed assistant message_end event.") return true;
 	if (result.malformedStdout && !result.protocolTerminal) return true;
-	return result.protocolTerminal && result.errorMessage !== undefined;
+	return false;
+}
+
+function markOversizedStdoutLine(result: AgentRunResult): void {
+	result.malformedStdout = true;
+	result.errorMessage = result.errorMessage ?? `Subagent JSON stdout line exceeded ${MAX_STDOUT_LINE_CHARS} characters.`;
+	noteFailureCause(result, result.errorMessage);
+	appendDiagnostic(result, result.errorMessage);
 }
 
 function processJsonLine(line: string, result: AgentRunResult, emit: () => void): void {
+	const record = parseJsonRecordLine(line);
 	if (result.protocolTerminal) {
+		if (record && isAllowedPostTerminalLifecycle(record)) {
+			if (applyJsonEvent(result, record)) emit();
+			return;
+		}
 		if (line.trim().length > 0 && noteLateStdout(result)) emit();
 		return;
 	}
-	const record = parseJsonRecordLine(line);
 	if (!record) {
 		if (line.trim().length > 0) markMalformedStdout(result, line);
 		emit();
 		return;
 	}
 	if (applyJsonEvent(result, record)) emit();
+}
+
+function isAllowedPostTerminalLifecycle(record: Record<string, unknown>): boolean {
+	return record.type === "auto_retry_end" || record.type === "agent_end";
 }
 
 function noteLateStdout(result: AgentRunResult): boolean {

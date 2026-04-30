@@ -2,6 +2,7 @@
 
 import type { AgentRunResult, AgentTeamDetails, FailureProvenance, UsageStats } from "./types.ts";
 import { INLINE_HANDOFF_CHARS, createEmptyUsage } from "./types.ts";
+import { assistantOutputArtifactPath, assistantOutputInlineText, assistantOutputIsFile } from "./assistant-output.ts";
 
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024;
@@ -56,7 +57,7 @@ export function formatRunForModel(details: AgentTeamDetails): string {
 	const synthesis = [...details.steps].reverse().find((step) => step.synthesis && step.status === "succeeded");
 	const header = ["# agent_team result", "", `Objective: ${details.objective ? modelText(details.objective) : "unspecified"}`];
 	const trust = details.steps.length > 0 ? ["", OUTPUT_TRUST_NOTICE] : [];
-	const final = synthesis ? ["", "## Final synthesis", visibleStepDiagnostic(synthesis), outputBlock(synthesis.id, capturedOutputText(synthesis) || "(no output)")] : [];
+	const final = synthesis ? ["", "## Final synthesis", assistantOutputIsFile(synthesis) ? `File reference: ${fileReferenceText(synthesis)}` : "", visibleStepDiagnostic(synthesis), outputBlock(synthesis.id, capturedOutputText(synthesis) || (assistantOutputIsFile(synthesis) ? "" : "(no output)"))] : [];
 	const summary = ["", "## Step summary", ...details.steps.map(formatStepSummary)];
 	const outputSteps = synthesis ? details.steps.filter((step) => step.id !== synthesis.id) : details.steps;
 	const outputs = outputSteps.length > 0 ? ["", "## Step outputs", formatStepOutputsForPrompt(outputSteps)] : [];
@@ -93,14 +94,15 @@ export function formatStepOutputsForPrompt(results: AgentRunResult[], ids?: stri
 export function fallbackResultText(result: AgentRunResult, full = false): string {
 	const output = capturedOutputText(result, full);
 	if (output) return output;
+	if (assistantOutputIsFile(result)) return fileReferenceText(result);
 	const reason = failureReason(result);
 	if (reason) return reason;
 	const lastDiagnostic = [...result.events].reverse().find((event) => event.type === "diagnostic");
 	return lastDiagnostic?.preview ?? "(no output)";
 }
 
-function capturedOutputText(result: AgentRunResult, full = false): string {
-	return full ? result.outputFull || result.output : result.output;
+function capturedOutputText(result: AgentRunResult, _full = false): string {
+	return assistantOutputInlineText(result);
 }
 
 function outputBlock(label: string, output: string): string {
@@ -112,12 +114,13 @@ function escapeOutputBlockMarkers(output: string): string {
 }
 
 function isOversizedForInlineHandoff(result: AgentRunResult): boolean {
-	return result.outputFull.length > INLINE_HANDOFF_CHARS;
+	return assistantOutputIsFile(result);
 }
 
 function fileReferenceText(result: AgentRunResult): string {
-	if (result.fullOutputPath) return `output exceeded ${INLINE_HANDOFF_CHARS} chars; read this exact JSON-string file path: ${JSON.stringify(result.fullOutputPath)}`;
-	return `output exceeded ${INLINE_HANDOFF_CHARS} chars but no full-output file is available; output retained in structured details`;
+	const path = assistantOutputArtifactPath(result);
+	if (path) return `output exceeded ${INLINE_HANDOFF_CHARS} chars; read this exact JSON-string file path: ${JSON.stringify(path)}`;
+	return `output exceeded ${INLINE_HANDOFF_CHARS} chars but no assistant output artifact is available`;
 }
 
 export function formatUsageStats(usage: UsageStats, model: string | undefined): string {
@@ -226,7 +229,8 @@ function formatStepSummary(result: AgentRunResult): string {
 	const reasonSuffix = reason ? `; reason=${JSON.stringify(reason)}` : "";
 	const causeSuffix = result.status === "succeeded" || !result.failureCause ? "" : `; cause=${JSON.stringify(compactReason(result.failureCause))}`;
 	const provenanceSuffix = result.status === "succeeded" || !result.failureProvenance ? "" : `; provenance=${formatFailureProvenanceForModel(result.failureProvenance)}`;
-	const pathSuffix = (result.outputTruncated || result.outputCaptureTruncated) && result.fullOutputPath ? `; full=${JSON.stringify(result.fullOutputPath)}` : "";
+	const path = assistantOutputArtifactPath(result);
+	const pathSuffix = path ? `; full=${JSON.stringify(path)}` : "";
 	return `- ${modelText(result.id)}: ${modelText(result.agent)} -> ${modelText(result.status)}${usageSuffix}${reasonSuffix}${causeSuffix}${provenanceSuffix}${pathSuffix}`;
 }
 
@@ -261,7 +265,7 @@ function visibleStepDiagnostic(result: AgentRunResult): string {
 	const diagnostics = result.events.filter(
 		(event) =>
 			event.type === "diagnostic" &&
-			/Could not persist full step output|Could not remove temp prompt|termination is unconfirmed|SIGTERM was not accepted|SIGKILL was not accepted/.test(event.preview),
+			/Could not remove temp prompt|termination is unconfirmed|SIGTERM was not accepted|SIGKILL was not accepted/.test(event.preview),
 	);
 	const diagnostic = diagnostics.find((event) => /termination is unconfirmed/.test(event.preview)) ?? diagnostics[0];
 	return diagnostic ? `Diagnostic: ${compactReason(diagnostic.preview)}` : "";

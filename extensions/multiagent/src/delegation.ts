@@ -56,6 +56,9 @@ export async function runAgentTeam(
 	input: AgentTeamInput,
 	options: RunTeamOptions,
 ): Promise<AgentToolResult<AgentTeamDetails>> {
+	if (options.discovery.diagnostics.some((item) => item.severity === "error") && input.graphFile !== undefined) {
+		return finalizeResult(makeDetails(input, options, [], [], options.discovery.diagnostics));
+	}
 	const actionDiagnostics = validatePreflightShape(input);
 	if (actionDiagnostics.some((item) => item.severity === "error")) {
 		return finalizeResult(makeDetails(input, options, [], [], [...options.discovery.diagnostics, ...actionDiagnostics]));

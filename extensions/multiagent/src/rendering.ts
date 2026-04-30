@@ -6,6 +6,7 @@ import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import type { AgentTeamInput } from "./schemas.ts";
 import type { AgentRunResult, AgentTeamDetails } from "./types.ts";
 import { isAgentTeamDetails } from "./types.ts";
+import { assistantOutputArtifactPath, assistantOutputInlineText, assistantOutputIsFile } from "./assistant-output.ts";
 import { aggregateUsage, fallbackResultText, formatUsageStats } from "./result-format.ts";
 
 interface RenderOptions {
@@ -17,6 +18,9 @@ export function renderAgentTeamCall(args: AgentTeamInput, theme: Theme) {
 	if (args.action === "catalog") {
 		const query = args.library?.query ? ` ${theme.fg("dim", args.library.query)}` : "";
 		return new Text(`${theme.fg("toolTitle", theme.bold("agent_team"))} ${theme.fg("accent", "catalog")}${query}`, 0, 0);
+	}
+	if (args.graphFile) {
+		return new Text(`${theme.fg("toolTitle", theme.bold("agent_team"))} ${theme.fg("accent", "graphFile")} ${theme.fg("dim", shorten(args.graphFile, 120))}`, 0, 0);
 	}
 	const agents = args.agents?.length ?? 0;
 	const steps = args.steps?.length ?? 0;
@@ -85,7 +89,8 @@ function renderExpandedRun(details: AgentTeamDetails, theme: Theme) {
 		}
 		const output = fallbackResultText(step).trim();
 		if (output.length > 0) container.addChild(new Markdown(output, 0, 0, mdTheme));
-		if ((step.outputTruncated || step.outputCaptureTruncated) && step.fullOutputPath) container.addChild(new Text(theme.fg("dim", `full output: ${step.fullOutputPath}`), 0, 0));
+		const outputPath = assistantOutputArtifactPath(step);
+		if (outputPath) container.addChild(new Text(theme.fg("dim", `full output: ${outputPath}`), 0, 0));
 		if (step.stderr.trim().length > 0) container.addChild(new Text(theme.fg("warning", step.stderr.trim()), 0, 0));
 		const usage = formatUsageStats(step.usage, step.model);
 		if (usage.length > 0) container.addChild(new Text(theme.fg("dim", usage), 0, 0));
@@ -95,8 +100,9 @@ function renderExpandedRun(details: AgentTeamDetails, theme: Theme) {
 
 function renderStepCollapsed(step: AgentRunResult, theme: Theme): string {
 	const activity = step.events.slice(-3).map((event) => renderEventLine(event.label, event.preview, event.status, theme));
-	const output = step.output.trim();
+	const output = assistantOutputInlineText(step).trim();
 	if (output.length > 0) activity.push(theme.fg("toolOutput", shorten(output.replace(/\s+/g, " "), 180)));
+	else if (assistantOutputIsFile(step)) activity.push(theme.fg("dim", "output saved to file"));
 	return [
 		`${statusLabel(step, theme)} ${theme.fg("accent", step.id)} ${theme.fg("muted", `agent=${step.agentRef}`)}`,
 		activity.length > 0 ? activity.join("\n") : theme.fg("muted", step.status === "pending" ? "pending" : "no output"),

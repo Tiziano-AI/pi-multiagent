@@ -51,6 +51,15 @@ test("validatePreflightShape rejects invalid run shapes before confirmation", ()
 	assert.equal(diagnostics.some((item) => item.code === "run-library-query-denied" && item.path === "/library/query"), true);
 });
 
+test("validatePreflightShape treats graphFile as a complete run graph wrapper", () => {
+	const wrapper = validatePreflightShape({ action: "run", graphFile: "examples/graphs/research-to-change-gated-loop.json" });
+	assert.equal(wrapper.some((item) => item.code === "objective-required"), false);
+	assert.equal(wrapper.some((item) => item.code === "steps-required"), false);
+
+	const mixed = validatePreflightShape({ action: "run", graphFile: "graph.json", objective: "inline", steps: [{ id: "one", agent: "package:reviewer", task: "review" }] });
+	assert.equal(mixed.some((item) => item.code === "graph-file-inline-fields-denied"), true);
+});
+
 test("resolveRunPlan supports inline agents and dependency synthesis", () => {
 	const plan = resolveRunPlan(
 		{

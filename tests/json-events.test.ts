@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import {
 	applyJsonEvent,
@@ -12,7 +15,7 @@ import {
 import { formatFailureProvenance } from "../extensions/multiagent/src/failure-provenance.ts";
 import { formatDetailsForModel, formatStepOutputsForPrompt, truncateHead } from "../extensions/multiagent/src/result-format.ts";
 import { snapshotResult } from "../extensions/multiagent/src/snapshot.ts";
-import { EVENT_PREVIEW_CHARS, OUTPUT_CAPTURE_CHARS, OUTPUT_INLINE_CHARS, STDERR_PREVIEW_CHARS, type AgentTeamDetails } from "../extensions/multiagent/src/types.ts";
+import { EVENT_PREVIEW_CHARS, OUTPUT_INLINE_CHARS, STDERR_PREVIEW_CHARS, type AgentRunResult, type AgentTeamDetails } from "../extensions/multiagent/src/types.ts";
 
 function makeResult() {
 	return createRunResult({
@@ -24,6 +27,20 @@ function makeResult() {
 		task: "find",
 		cwd: "/tmp",
 	});
+}
+
+function inlineOutput(result: AgentRunResult): string {
+	return result.assistantOutput.inlineText ?? "";
+}
+
+function fileOutput(result: AgentRunResult): string {
+	const path = result.assistantOutput.filePath;
+	return path ? readFileSync(path, "utf8") : "";
+}
+
+function removeOutputFile(result: AgentRunResult): void {
+	const path = result.assistantOutput.filePath;
+	if (path) rmSync(dirname(path), { recursive: true, force: true });
 }
 
 test("parseJsonRecordLine ignores non-json and non-object lines", () => {
@@ -45,8 +62,8 @@ test("applyJsonEvent captures assistant output and usage", () => {
 		},
 	});
 	assert.equal(handled, true);
-	assert.equal(result.output, "done");
-	assert.equal(result.outputFull, "done");
+	assert.equal(inlineOutput(result), "done");
+	assert.equal(inlineOutput(result), "done");
 	assert.equal(result.sawAssistantMessageEnd, true);
 	assert.equal(result.usage.input, 10);
 	assert.equal(result.usage.output, 5);
@@ -69,7 +86,7 @@ test("applyJsonEvent joins multiple assistant text blocks and ignores unknown bl
 			stopReason: "stop",
 		},
 	});
-	assert.equal(result.outputFull, "first\n\nsecond");
+	assert.equal(inlineOutput(result), "first\n\nsecond");
 });
 
 test("applyJsonEvent preserves leading and trailing assistant whitespace", () => {
@@ -82,8 +99,8 @@ test("applyJsonEvent preserves leading and trailing assistant whitespace", () =>
 			stopReason: "stop",
 		},
 	});
-	assert.equal(result.outputFull, "\n  first line\nsecond line  \n");
-	assert.equal(result.output, "\n  first line\nsecond line  \n");
+	assert.equal(inlineOutput(result), "\n  first line\nsecond line  \n");
+	assert.equal(inlineOutput(result), "\n  first line\nsecond line  \n");
 });
 
 test("toolUse message_end is intermediate when followed by final stop", () => {
@@ -92,7 +109,7 @@ test("toolUse message_end is intermediate when followed by final stop", () => {
 	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" } });
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
 	assert.equal(result.status, "succeeded");
-	assert.equal(result.outputFull, "done");
+	assert.equal(inlineOutput(result), "done");
 
 	const timedOut = makeResult();
 	applyJsonEvent(timedOut, { type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }], stopReason: "toolUse" } });
@@ -154,7 +171,7 @@ test("finishRunStatus fails closed for malformed, signaled, truncated, and incom
 	applyJsonEvent(staleStopReason, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "second" }] } });
 	finishRunStatus(staleStopReason, 0, { aborted: false, timedOut: false });
 	assert.equal(staleStopReason.status, "succeeded");
-	assert.equal(staleStopReason.outputFull, "first");
+	assert.equal(inlineOutput(staleStopReason), "first");
 	assert.equal(staleStopReason.stopReason, "stop");
 	assert.equal(staleStopReason.lateEventsIgnored, true);
 
@@ -263,7 +280,7 @@ test("empty synthesis keeps parent diagnostics outside synthesis output block", 
 	synthesis.id = "synthesis";
 	synthesis.synthesis = true;
 	synthesis.status = "succeeded";
-	synthesis.events.push({ type: "diagnostic", label: "diagnostic", preview: "Could not persist full step output parent diagnostic", status: undefined });
+	synthesis.events.push({ type: "diagnostic", label: "diagnostic", preview: "Could not remove temp prompt directory parent diagnostic", status: undefined });
 	const details: AgentTeamDetails = {
 		kind: "agent_team",
 		action: "run",
@@ -276,7 +293,7 @@ test("empty synthesis keeps parent diagnostics outside synthesis output block", 
 		fullOutputPath: undefined,
 	};
 	const formatted = formatDetailsForModel(details);
-	assert.equal(formatted.includes("Diagnostic: Could not persist full step output parent diagnostic"), true);
+	assert.equal(formatted.includes("Diagnostic: Could not remove temp prompt directory parent diagnostic"), true);
 	assert.equal(formatted.includes("[agent_team output begin: synthesis]\n(no output)\n[agent_team output end: synthesis]"), true);
 });
 
@@ -317,11 +334,10 @@ test("truncateHead closes a dangling output block before parent aggregate notes"
 
 test("oversized handoff keeps failure reason outside omitted output", () => {
 	const result = makeResult();
-	setOutputCapture(result, "x".repeat(OUTPUT_INLINE_CHARS + 1));
 	result.status = "failed";
 	result.errorMessage = "OPENAI_API_KEY=sk-policy-evidence terminal failure";
 	result.failureCause = result.errorMessage;
-	result.fullOutputPath = "/tmp/pi-multiagent-step-output-visible/inspect.md";
+	result.assistantOutput = { disposition: "file", chars: OUTPUT_INLINE_CHARS + 1, thresholdChars: OUTPUT_INLINE_CHARS, inlineText: undefined, filePath: "/tmp/pi-multiagent-step-output-visible/inspect.md" };
 	const formatted = formatStepOutputsForPrompt([result]);
 	assert.equal(formatted.includes("terminal failure"), true);
 	assert.equal(formatted.includes("sk-policy-evidence"), true);
@@ -395,10 +411,9 @@ test("step summary quotes free-text failure fields", () => {
 test("automatic oversized file-ref handoff preserves exact path as parent metadata", () => {
 	const result = makeResult();
 	result.status = "succeeded";
-	setOutputCapture(result, "x".repeat(OUTPUT_INLINE_CHARS + 1));
-	result.fullOutputPath = "/tmp/pi multi  agent/step\noutput.md";
+	result.assistantOutput = { disposition: "file", chars: OUTPUT_INLINE_CHARS + 1, thresholdChars: OUTPUT_INLINE_CHARS, inlineText: undefined, filePath: "/tmp/pi multi  agent/step\noutput.md" };
 	const formatted = formatStepOutputsForPrompt([result]);
-	assert.equal(formatted.includes(`File reference: output exceeded ${OUTPUT_INLINE_CHARS} chars; read this exact JSON-string file path: ${JSON.stringify(result.fullOutputPath)}`), true);
+	assert.equal(formatted.includes(`File reference: output exceeded ${OUTPUT_INLINE_CHARS} chars; read this exact JSON-string file path: ${JSON.stringify(result.assistantOutput.filePath)}`), true);
 	assert.equal(formatted.includes("/tmp/pi multi agent/step output.md"), false);
 	const blockStart = formatted.indexOf("[agent_team output begin: inspect]\n") + "[agent_team output begin: inspect]\n".length;
 	const blockEnd = formatted.indexOf("\n[agent_team output end: inspect]", blockStart);
@@ -426,60 +441,71 @@ test("truncated stderr failure reasons keep terminal cause", () => {
 test("snapshotResult preserves raw paths and output", () => {
 	const result = makeResult();
 	result.task = "read /tmp/pi-multiagent-step-output-visible/producer.md";
-	result.output = "OPENAI_API_KEY=sk-output /tmp/pi-multiagent-step-output-visible/producer.md";
-	result.outputFull = result.output;
+	result.assistantOutput.inlineText = "OPENAI_API_KEY=sk-output /tmp/pi-multiagent-step-output-visible/producer.md";
+	result.assistantOutput.chars = result.assistantOutput.inlineText.length;
 	result.stderr = "Authorization: Bearer visible";
-	result.fullOutputPath = "/tmp/pi-multiagent-step-output-visible/producer.md";
 	const snapshot = snapshotResult(result);
 	assert.equal(snapshot.task.includes("/tmp/pi-multiagent-step-output-visible/producer.md"), true);
-	assert.equal(snapshot.output.includes("sk-output"), true);
+	assert.equal(snapshot.assistantOutput.inlineText?.includes("sk-output"), true);
 	assert.equal(snapshot.stderr.includes("Bearer visible"), true);
-	assert.equal(snapshot.fullOutputPath, result.fullOutputPath);
+	assert.deepEqual(snapshot.assistantOutput, result.assistantOutput);
 });
 
-test("setOutputCapture preserves full output separately from inline output", () => {
+test("setOutputCapture spills oversized output to a file without losing the tail", () => {
 	const result = makeResult();
 	setOutputCapture(result, `start ${"x".repeat(OUTPUT_INLINE_CHARS + 1)} sentinel-end`);
-	assert.equal(result.outputTruncated, true);
-	assert.equal(result.output.includes("sentinel-end"), false);
-	assert.equal(result.outputFull.includes("sentinel-end"), true);
+	assert.equal(result.errorMessage, undefined);
+	assert.equal(result.assistantOutput.disposition, "file");
+	assert.equal(result.assistantOutput.inlineText, undefined);
+	assert.equal(fileOutput(result).includes("sentinel-end"), true);
+	removeOutputFile(result);
 });
 
-test("setOutputCapture caps retained full output", () => {
-	const result = makeResult();
-	setOutputCapture(result, `head ${"x".repeat(OUTPUT_CAPTURE_CHARS + 100)} tail`);
-	assert.equal(result.outputCaptureTruncated, true);
-	assert.equal(result.outputFull.length, OUTPUT_CAPTURE_CHARS);
-	assert.equal(result.errorMessage?.includes(String(OUTPUT_CAPTURE_CHARS)), true);
-	assert.equal(result.outputFull.includes("tail"), false);
-	assert.equal(result.outputFull.includes("capture limit reached"), true);
+test("setOutputCapture cleans assistant output temp dir after write failure", () => {
+	const root = mkdtempSync(join(tmpdir(), "pi-multiagent-output-cleanup-"));
+	const originalTmpdir = process.env.TMPDIR;
+	try {
+		process.env.TMPDIR = root;
+		const result = createRunResult({ id: "missing/file", agent: "scout", agentName: "Scout", agentRef: "inline:scout", agentSource: "inline", task: "find", cwd: root });
+		setOutputCapture(result, "x".repeat(OUTPUT_INLINE_CHARS + 1));
+		assert.equal(result.errorMessage?.includes("assistant output artifact persistence failed"), true);
+		assert.equal(readdirSync(root).some((entry) => entry.startsWith("pi-multiagent-step-output-")), false);
+	} finally {
+		if (originalTmpdir === undefined) delete process.env.TMPDIR;
+		else process.env.TMPDIR = originalTmpdir;
+		rmSync(root, { recursive: true, force: true });
+	}
 });
 
-test("capture overflow fails terminal status with provenance", () => {
+test("large assistant output size alone does not fail terminal status", () => {
 	const result = makeResult();
-	setOutputCapture(result, `head ${"x".repeat(OUTPUT_CAPTURE_CHARS + 100)} tail`);
+	setOutputCapture(result, `head ${"x".repeat(OUTPUT_INLINE_CHARS + 100)} tail`);
+	result.sawAssistantMessageEnd = true;
+	result.stopReason = "stop";
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
-	assert.equal(result.status, "failed");
-	assert.equal(result.failureProvenance ? formatFailureProvenance(result.failureProvenance).includes(`likely_root=${JSON.stringify("child assistant output exceeded the capture limit")}`) : false, true);
-	assert.equal(result.failureProvenance ? formatFailureProvenance(result.failureProvenance).includes("closeout=normal") : false, true);
+	assert.equal(result.status, "succeeded");
+	assert.equal(result.errorMessage, undefined);
+	assert.equal(fileOutput(result).includes("tail"), true);
+	removeOutputFile(result);
 });
 
-test("message_end does not overwrite retained output after capture overflow", () => {
+test("message_end does not overwrite streamed file output", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `head ${"x".repeat(OUTPUT_CAPTURE_CHARS + 100)} tail` } });
-	const retained = result.outputFull;
-	assert.equal(result.outputCaptureTruncated, true);
+	applyJsonEvent(result, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `head ${"x".repeat(OUTPUT_INLINE_CHARS + 100)} tail` } });
+	const retained = fileOutput(result);
+	assert.equal(result.assistantOutput.disposition, "file");
 	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "short final" }], stopReason: "stop" } });
-	assert.equal(result.outputFull, retained);
-	assert.equal(result.outputFull.includes("short final"), false);
-	assert.equal(result.outputFull.includes("capture limit reached"), true);
+	assert.equal(fileOutput(result), retained);
+	assert.equal(fileOutput(result).includes("short final"), false);
+	assert.equal(fileOutput(result).includes("tail"), true);
+	removeOutputFile(result);
 });
 
 test("applyJsonEvent latches terminal stop and caps retained events", () => {
 	const result = makeResult();
 	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" } });
 	for (let index = 0; index < 50; index += 1) applyJsonEvent(result, { type: "tool_execution_start", toolName: `late-${index}`, args: {} });
-	assert.equal(result.outputFull, "done");
+	assert.equal(inlineOutput(result), "done");
 	assert.equal(result.eventsTruncated, false);
 	assert.equal(result.events.some((event) => event.preview.includes("Ignored child JSON event")), true);
 });
@@ -505,6 +531,23 @@ test("applyJsonEvent surfaces retry and compaction lifecycle events", () => {
 	assert.equal(result.events.some((event) => event.preview.includes("sk-compact")), true);
 });
 
+test("auto retry start resets transient assistant failure state", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial failed attempt" }], stopReason: "error", errorMessage: "terminated" } });
+	assert.equal(result.errorMessage, "Subagent assistant error: terminated");
+	assert.equal(inlineOutput(result), "partial failed attempt");
+	applyJsonEvent(result, { type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1 });
+	assert.equal(result.errorMessage, undefined);
+	assert.equal(result.failureCause, undefined);
+	assert.equal(result.stopReason, undefined);
+	assert.equal(result.sawAssistantMessageEnd, false);
+	assert.equal(inlineOutput(result), "");
+	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" } });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "succeeded");
+	assert.equal(inlineOutput(result), "recovered");
+});
+
 test("applyJsonEvent caps lifecycle event preview size", () => {
 	const result = makeResult();
 	applyJsonEvent(result, { type: "auto_retry_end", success: false, finalError: "x".repeat(EVENT_PREVIEW_CHARS + 100) });
@@ -512,9 +555,11 @@ test("applyJsonEvent caps lifecycle event preview size", () => {
 	assert.equal(result.events[0].preview.includes("event preview truncated"), true);
 });
 
-test("setOutputCapture marks output above the inline handoff limit", () => {
+test("setOutputCapture marks output above the inline handoff limit as file disposition", () => {
 	const result = makeResult();
 	setOutputCapture(result, "x".repeat(OUTPUT_INLINE_CHARS + 10));
-	assert.equal(result.output.length > OUTPUT_INLINE_CHARS, true);
-	assert.equal(result.output.includes("[Subagent output exceeded inline handoff limit; full output saved to file when available.]"), true);
+	assert.equal(result.assistantOutput.disposition, "file");
+	assert.equal(typeof result.assistantOutput.filePath, "string");
+	assert.equal(fileOutput(result).length, OUTPUT_INLINE_CHARS + 10);
+	removeOutputFile(result);
 });

@@ -147,6 +147,7 @@ export const AgentTeamSchema = Type.Object(
 			description: 'Use "catalog" to list reusable agents. Use "run" to execute a bounded graph of inline or source-qualified library agents.',
 		}),
 		objective: Type.Optional(nonEmptyText("Overall objective for the team. Required for run; rejected for catalog.")),
+		graphFile: Type.Optional(nonEmptyText("Run-only relative path to a JSON file containing a complete agent_team run graph. Mutually exclusive with objective, library, agents, steps, synthesis, and limits.", MAX_PATH_FIELD_CHARS)),
 		library: Type.Optional(LibrarySchema),
 		agents: Type.Optional(
 			Type.Array(AgentSpecSchema, {

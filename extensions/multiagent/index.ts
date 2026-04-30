@@ -3,8 +3,9 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { discoverAgents, findNearestProjectAgentsDir } from "./src/agents.ts";
+import { discoverAgents, findNearestProjectAgentsDir, normalizeLibraryOptions } from "./src/agents.ts";
 import { runAgentTeam } from "./src/delegation.ts";
+import { materializeAgentTeamInput } from "./src/graph-file.ts";
 import { prepareLibraryOptions } from "./src/library-policy.ts";
 import { renderAgentTeamCall, renderAgentTeamResult } from "./src/rendering.ts";
 import { validatePreflightShape } from "./src/planning.ts";
@@ -32,6 +33,7 @@ export default function multiagentExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use agent_team when separate context improves reconnaissance, critique, implementation, review, or synthesis.",
 			"Prefer inline agents for task-specific roles. Use catalog only when reusable library agents may help.",
+			"Use graphFile for a checked-in JSON graph when a full choreography is easier to inspect than inline tool arguments.",
 			"Use ids that start with a lowercase letter and contain only lowercase letters, digits, and hyphens.",
 			"Use source-qualified library refs such as package:reviewer. Bare library names are invalid.",
 			"Library sources are package bundled prompts, user prompts from ~/.pi/agent/agents or PI_CODING_AGENT_DIR/agents, and explicit trusted project .pi/agents.",
@@ -45,11 +47,13 @@ export default function multiagentExtension(pi: ExtensionAPI) {
 		],
 		parameters: AgentTeamSchema,
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			const preparation = await prepareLibrary(params, ctx);
+			const graph = materializeAgentTeamInput(params, ctx.cwd);
+			const graphHasErrors = graph.diagnostics.some((item) => item.severity === "error");
+			const preparation = graphHasErrors ? { library: normalizeLibraryOptions(undefined), diagnostics: [] } : await prepareLibrary(graph.input, ctx);
 			const discovery = discoverAgents({ cwd: ctx.cwd, packageAgentsDir, library: preparation.library });
-			return runAgentTeam(params, {
+			return runAgentTeam(graph.input, {
 				cwd: ctx.cwd,
-				discovery: { ...discovery, diagnostics: [...preparation.diagnostics, ...discovery.diagnostics] },
+				discovery: { ...discovery, diagnostics: [...graph.diagnostics, ...preparation.diagnostics, ...discovery.diagnostics] },
 				library: preparation.library,
 				defaults: getInvocationDefaults(pi, ctx),
 				signal,

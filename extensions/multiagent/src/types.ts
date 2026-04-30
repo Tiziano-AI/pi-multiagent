@@ -32,12 +32,13 @@ export const MAX_DEPENDENCIES_PER_STEP = 12;
 export const MAX_CONCURRENCY = 6;
 export const INLINE_HANDOFF_CHARS = 100000;
 export const OUTPUT_INLINE_CHARS = INLINE_HANDOFF_CHARS;
-export const OUTPUT_CAPTURE_CHARS = 200000;
+export const MAX_STDOUT_LINE_CHARS = 1000000;
 export const STDERR_PREVIEW_CHARS = 6000;
 export const MAX_TEXT_FIELD_CHARS = 50000;
 export const MAX_SHORT_TEXT_FIELD_CHARS = 1000;
 export const MAX_PATH_FIELD_CHARS = 4096;
 export const MAX_MODEL_FIELD_CHARS = 256;
+export const MAX_GRAPH_FILE_BYTES = 256 * 1024;
 export const EVENT_PREVIEW_COUNT = 40;
 export const EVENT_PREVIEW_CHARS = 2000;
 
@@ -166,6 +167,14 @@ export interface FailureProvenance {
 	firstObserved: string;
 }
 
+export interface StepAssistantOutput {
+	disposition: "inline" | "file";
+	chars: number;
+	thresholdChars: number;
+	inlineText: string | undefined;
+	filePath: string | undefined;
+}
+
 export interface AgentRunResult {
 	id: string;
 	agent: string;
@@ -178,11 +187,7 @@ export interface AgentRunResult {
 	status: AgentStatus;
 	exitCode: number | undefined;
 	exitSignal: string | undefined;
-	output: string;
-	outputFull: string;
-	outputTruncated: boolean;
-	outputCaptureTruncated: boolean;
-	fullOutputPath: string | undefined;
+	assistantOutput: StepAssistantOutput;
 	stderr: string;
 	stderrTruncated: boolean;
 	events: TeamEvent[];

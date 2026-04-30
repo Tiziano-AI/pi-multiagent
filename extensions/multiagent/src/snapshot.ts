@@ -5,6 +5,7 @@ import type { AgentRunResult, CatalogAgentSummary, PublicResolvedAgent, Resolved
 export function snapshotResult(result: AgentRunResult): AgentRunResult {
 	return {
 		...result,
+		assistantOutput: { ...result.assistantOutput },
 		events: result.events.map((event) => ({ ...event })),
 		usage: { ...result.usage },
 	};

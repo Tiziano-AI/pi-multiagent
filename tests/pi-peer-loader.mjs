@@ -6,6 +6,7 @@ const MAPPINGS = new Map([
 	["@mariozechner/pi-ai", `${PACKAGE_ROOT}/node_modules/@mariozechner/pi-ai/dist/index.js`],
 	["@mariozechner/pi-tui", `${PACKAGE_ROOT}/node_modules/@mariozechner/pi-tui/dist/index.js`],
 	["typebox", `${PACKAGE_ROOT}/node_modules/typebox/build/index.mjs`],
+	["typebox/compile", `${PACKAGE_ROOT}/node_modules/typebox/build/compile/index.mjs`],
 ]);
 
 export async function resolve(specifier, context, nextResolve) {

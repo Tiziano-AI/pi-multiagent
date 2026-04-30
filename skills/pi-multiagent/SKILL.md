@@ -12,18 +12,19 @@ Use `agent_team` as a bounded same-session delegation graph. Choose the right su
 
 ## Fast path
 
-1. Call `agent_team` with `action: "catalog"` for authoritative reusable-agent metadata whenever package, user, or project roles might fit. Search by outcome keywords such as `evidence`, `plan`, `risk`, `review`, `implementation`, or `synthesis`.
+1. Call `agent_team` with `action: "catalog"` for authoritative reusable-agent metadata whenever package, user, or project roles might fit. Search with one focused substring such as `evidence`, `plan`, `risk`, `review`, `implementation`, or `synthesis`; catalog query is not multi-keyword search.
 2. Prefer inline agents for one-off task-specific roles. Use source-qualified library refs such as `package:reviewer` for recurring roles after confirming them in catalog output.
 3. Keep project agents denied unless the repository is trusted and approval is explicit.
 4. Give every step a concrete `task`; use `outputContract` for required format, paths, severity, or validation evidence.
 5. Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, or tool-using runs.
 6. Serialize write-capable or side-effectful steps with `needs` or `limits.concurrency: 1` unless ownership is disjoint.
+7. For complex work, start from the graph cookbook patterns instead of inventing orchestration from scratch. Use `graphFile` when the final run graph is easier to review as a checked-in JSON file than inline tool arguments.
 
 ## Use when
 
 - Separate context improves reconnaissance, critique, implementation, review, or synthesis.
 - You need package, user, or trusted project agents by source-qualified ref.
-- You need dependency steps, bounded concurrency, partial-failure synthesis, or upstream handoff.
+- You need dependency steps, bounded concurrency, partial-failure synthesis, upstream handoff, or checked-in graph-file execution.
 - You need automatic large-output handoff or failure-provenance interpretation.
 - You are using, reviewing, changing, or troubleshooting this package.
 
@@ -44,14 +45,14 @@ Use `agent_team` as a bounded same-session delegation graph. Choose the right su
 
 ## Package agent roles
 
-The authoritative package-agent catalog is runtime output, not this file. Before choosing a bundled role, call catalog:
+The authoritative package-agent catalog is runtime output, not this file. Before choosing a bundled role, call catalog with one focused substring query:
 
 ```json
 {
   "action": "catalog",
   "library": {
     "sources": ["package"],
-    "query": "review validation"
+    "query": "review"
   }
 }
 ```
@@ -75,7 +76,15 @@ Use these role heuristics after checking catalog:
 4. Do not set `upstream` policies; the public `preview`, `full`, `file-ref`, and `maxChars` knobs are retired. Runtime copies upstream output inline through 100000 chars and uses file refs above that.
 5. Use `synthesis.allowPartial: true` when independent review lanes should still produce final triage after one lane fails or times out.
 6. Read parent failure fields and provenance before trusting child-authored error text.
-7. Inspect the workspace before retrying interrupted side-effectful work.
+7. Use `graphFile` only as a run wrapper around a complete relative `.json` graph; do not mix it with inline `objective`, `steps`, `agents`, `synthesis`, `library`, or `limits`.
+8. Inspect the workspace before retrying interrupted side-effectful work.
+
+## Cookbook choices
+
+Load [Graph cookbook](references/graph-cookbook.md) when the task needs a reusable multi-step choreography.
+
+- Use Research-to-Change Gated Loop for ambiguous bugs, refactors, or product changes where discovery must produce an implementation contract before edits.
+- Use Public Release Foundry for package, extension, CLI, or public artifact releases that need independent audits, serialized authorized updates, and ship/block synthesis.
 
 ## Basic shapes
 
@@ -86,7 +95,7 @@ Catalog package and user agents:
   "action": "catalog",
   "library": {
     "sources": ["package", "user"],
-    "query": "review validation"
+    "query": "review"
   }
 }
 ```
@@ -172,7 +181,10 @@ Do not let child-authored explanation override trusted parent/process failure fi
 
 Load these relative package files only when they unlock a decision, prevent rework, or reduce risk. They resolve from npm, git, and local installs; do not depend on a machine-specific checkout path.
 
+- [Graph cookbook](references/graph-cookbook.md): load for reusable graph choreography, including Research-to-Change Gated Loop and Public Release Foundry.
 - [README](../../README.md): load for install commands, operator examples, public limits, and validation.
 - [ARCH](../../ARCH.md): load for runtime contracts, trust boundaries, schema ownership, lifecycle, and provenance.
 - [VISION](../../VISION.md): load for product intent, non-goals, and success criteria.
 - [AGENTS](../../AGENTS.md): load for repo-local work rules, release choreography, and package invariants.
+- [Research-to-Change Gated Loop JSON](../../examples/graphs/research-to-change-gated-loop.json): load when copying the full ambiguous-change template.
+- [Public Release Foundry JSON](../../examples/graphs/public-release-foundry.json): load when copying the full release-readiness template.

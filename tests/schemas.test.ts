@@ -17,6 +17,7 @@ test("AgentTeamSchema bounds caller text field lengths", () => {
 	const synthesis = root.synthesis.properties;
 
 	assert.equal(root.objective.maxLength, MAX_TEXT_FIELD_CHARS);
+	assert.equal(root.graphFile.maxLength, MAX_PATH_FIELD_CHARS);
 	assert.equal(library.query.maxLength, MAX_SHORT_TEXT_FIELD_CHARS);
 	assert.equal(agent.description.maxLength, MAX_SHORT_TEXT_FIELD_CHARS);
 	assert.equal(agent.system.maxLength, MAX_TEXT_FIELD_CHARS);
@@ -29,6 +30,8 @@ test("AgentTeamSchema bounds caller text field lengths", () => {
 	assert.equal(synthesis.task.maxLength, MAX_TEXT_FIELD_CHARS);
 	assert.equal(synthesis.outputContract.maxLength, MAX_TEXT_FIELD_CHARS);
 
+	assert.equal(acceptsLength(root.graphFile, MAX_PATH_FIELD_CHARS), true);
+	assert.equal(acceptsLength(root.graphFile, MAX_PATH_FIELD_CHARS + 1), false);
 	assert.equal(acceptsLength(step.task, MAX_TEXT_FIELD_CHARS), true);
 	assert.equal(acceptsLength(step.task, MAX_TEXT_FIELD_CHARS + 1), false);
 	assert.equal(acceptsLength(agent.model, MAX_MODEL_FIELD_CHARS), true);

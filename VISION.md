@@ -33,7 +33,8 @@ Without a package boundary, callers copy prompts manually, trust boundaries beco
 - Oversized upstream output is automatically passed by artifact reference and the receiver is launched with `read`.
 - Failure output separates first observed cause, parent closeout, stderr, and triage fields.
 - The package skill guides safe graph construction without replacing the docs.
-- Package checks verify the schema, launch boundary, rendering, provenance, skill, and packed artifact.
+- Graph cookbook examples make advanced choreography discoverable without adding a second runtime template API.
+- Package checks verify the schema, launch boundary, rendering, provenance, skill, graph examples, public copy, and packed artifact.
 
 ## Non-goals
 
@@ -41,6 +42,7 @@ Without a package boundary, callers copy prompts manually, trust boundaries beco
 - No external scheduler.
 - No durable run ledger or crash resume.
 - No human slash-command workflow.
+- No runtime graph-template action; cookbook graphs are copyable examples.
 - No old-schema fallback or alternate names for bare library refs.
 - No output-laundering layer over subagent text.
 - No Pi vendor-code changes.

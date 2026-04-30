@@ -3,8 +3,6 @@
 import {
 	EVENT_PREVIEW_CHARS,
 	EVENT_PREVIEW_COUNT,
-	OUTPUT_CAPTURE_CHARS,
-	OUTPUT_INLINE_CHARS,
 	STDERR_PREVIEW_CHARS,
 	createEmptyUsage,
 	isRecord,
@@ -17,6 +15,7 @@ import {
 	type TeamEvent,
 	type UsageStats,
 } from "./types.ts";
+import { appendAssistantOutput, createStepAssistantOutput, setAssistantOutput } from "./assistant-output.ts";
 import { formatFailureProvenance } from "./failure-provenance.ts";
 
 interface RunCompletionState {
@@ -52,11 +51,7 @@ export function createRunResult(input: {
 		status: input.status ?? "running",
 		exitCode: undefined,
 		exitSignal: undefined,
-		output: "",
-		outputFull: "",
-		outputTruncated: false,
-		outputCaptureTruncated: false,
-		fullOutputPath: undefined,
+		assistantOutput: createStepAssistantOutput(),
 		stderr: "",
 		stderrTruncated: false,
 		events: [],
@@ -106,7 +101,10 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 		});
 		return true;
 	}
-	if (eventType === "auto_retry_start") return appendLifecycleEvent(result, "auto-retry", `attempt ${readEventNumber(event.attempt)} of ${readEventNumber(event.maxAttempts)}; delay ${readEventNumber(event.delayMs)}ms`, "running");
+	if (eventType === "auto_retry_start") {
+		resetTransientAssistantFailure(result);
+		return appendLifecycleEvent(result, "auto-retry", `attempt ${readEventNumber(event.attempt)} of ${readEventNumber(event.maxAttempts)}; delay ${readEventNumber(event.delayMs)}ms`, "running");
+	}
 	if (eventType === "auto_retry_end") return appendLifecycleEvent(result, "auto-retry", event.success === true ? "succeeded" : readEventText(event.finalError, "failed"), event.success === true ? "done" : "error");
 	if (eventType === "compaction_start") return appendLifecycleEvent(result, "compaction", `${readEventText(event.reason, "unknown")} started`, "running");
 	if (eventType === "compaction_end") {
@@ -117,8 +115,8 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 	if (eventType === "message_update") {
 		const update = isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : undefined;
 		if (update?.type === "text_delta" && typeof update.delta === "string") {
-			if (result.outputCaptureTruncated) return false;
-			setOutputCapture(result, `${result.outputFull}${update.delta}`);
+			const artifactError = appendAssistantOutput(result, update.delta);
+			if (artifactError) setErrorMessage(result, artifactError);
 			return true;
 		}
 	}
@@ -133,9 +131,10 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 		}
 		if (message.role === "assistant") {
 			result.sawAssistantMessageEnd = true;
-			if (!result.outputCaptureTruncated) {
+			if (result.assistantOutput.chars === 0) {
 				const text = getText(message.content);
-				setOutputCapture(result, text);
+				const artifactError = setAssistantOutput(result, text);
+				if (artifactError) setErrorMessage(result, artifactError);
 			}
 			addUsage(result.usage, message.usage);
 			result.usage.turns += 1;
@@ -153,7 +152,7 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 				result.protocolTerminal = true;
 			} else {
 				result.stopReason = stopReason;
-				result.protocolTerminal = true;
+				result.protocolTerminal = childError ? false : true;
 				if (!childError) setErrorMessage(result, `Subagent ended with non-success stop reason ${stopReason}.`);
 			}
 			if (childError) appendDiagnostic(result, `Subagent assistant error reported: ${childError}`);
@@ -199,17 +198,19 @@ export function markMalformedStdout(result: AgentRunResult, line: string): void 
 }
 
 export function setOutputCapture(result: AgentRunResult, text: string): void {
-	const captured = captureOutputText(text);
-	result.outputFull = captured.text;
-	result.outputCaptureTruncated = result.outputCaptureTruncated || captured.truncated;
-	if (captured.truncated) setErrorMessage(result, `Subagent output exceeded capture limit of ${OUTPUT_CAPTURE_CHARS} characters.`);
-	if (captured.text.length <= OUTPUT_INLINE_CHARS) {
-		result.output = captured.text;
-		result.outputTruncated = captured.truncated;
-		return;
-	}
-	result.output = `${captured.text.slice(0, OUTPUT_INLINE_CHARS)}\n[Subagent output exceeded inline handoff limit; full output saved to file when available.]`;
-	result.outputTruncated = true;
+	const artifactError = setAssistantOutput(result, text);
+	if (artifactError) setErrorMessage(result, artifactError);
+}
+
+function resetTransientAssistantFailure(result: AgentRunResult): void {
+	result.assistantOutput = createStepAssistantOutput();
+	result.errorMessage = undefined;
+	result.failureCause = undefined;
+	result.failureProvenance = undefined;
+	result.stopReason = undefined;
+	result.protocolTerminal = false;
+	result.sawAssistantMessageEnd = false;
+	result.lateEventsIgnored = false;
 }
 
 function appendLifecycleEvent(result: AgentRunResult, label: string, preview: string, status: TeamEvent["status"]): boolean {
@@ -260,15 +261,6 @@ function noteLateEvent(result: AgentRunResult): boolean {
 	return true;
 }
 
-function captureOutputText(text: string): { text: string; truncated: boolean } {
-	if (text.length <= OUTPUT_CAPTURE_CHARS) return { text, truncated: false };
-	const marker = `\n[Subagent output capture limit reached at ${OUTPUT_CAPTURE_CHARS} characters; further output omitted.]`;
-	return {
-		text: `${text.slice(0, Math.max(0, OUTPUT_CAPTURE_CHARS - marker.length))}${marker}`,
-		truncated: true,
-	};
-}
-
 function readEventText(value: unknown, fallback: string): string {
 	return typeof value === "string" && value.trim().length > 0 ? value : fallback;
 }
@@ -283,7 +275,7 @@ export function finishRunStatus(
 	state: RunCompletionState,
 ): void {
 	const aborted = state.aborted;
-	const hasPriorFailure = result.errorMessage !== undefined || result.failureCause !== undefined || result.malformedStdout || result.outputCaptureTruncated;
+	const hasPriorFailure = result.errorMessage !== undefined || result.failureCause !== undefined || result.malformedStdout;
 	result.exitCode = exitCode;
 	result.exitSignal = state.exitSignal;
 	result.timedOut = state.timedOut;
@@ -371,7 +363,7 @@ function inferLikelyFailureRoot(result: AgentRunResult, exitCode: number | undef
 	if (message.startsWith("Bash-enabled subagent refused cwd with project settings:")) return "project settings could alter bash execution in the child cwd";
 	if (message.startsWith("Subagent launch error:")) return "parent failed before child process launch completed";
 	if (message.startsWith("Subagent process error:")) return "child process spawn or runtime process error";
-	if (result.outputCaptureTruncated) return "child assistant output exceeded the capture limit";
+	if (message.startsWith("Subagent assistant output artifact persistence failed:")) return "parent failed to persist oversized assistant output artifact";
 	if (message.startsWith("Subagent stdin transport failed:") || message.startsWith("Subagent stdout stream failed:") || message.startsWith("Subagent stderr stream failed:")) return "local parent-child transport failed";
 	if (result.malformedStdout) return "child violated JSON-mode stdout protocol";
 	if (state.timedOut) return "parent timeout killed or interrupted the child before completion";

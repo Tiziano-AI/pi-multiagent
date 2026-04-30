@@ -12,6 +12,7 @@ const publicFiles = [
 	"VISION.md",
 	"AGENTS.md",
 	...collectFiles("agents", ".md"),
+	...collectFiles("examples", ".json"),
 	...collectFiles("skills", ".md"),
 	...collectFiles("extensions", ".ts"),
 ];

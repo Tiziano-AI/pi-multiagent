@@ -26,6 +26,7 @@
     "ARCH.md",
     "LICENSE",
     "agents/*.md",
+    "examples/**/*.json",
     "skills/**/*.md",
     "extensions/**/*.ts"
   ],
