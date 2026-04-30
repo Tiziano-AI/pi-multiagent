@@ -18,7 +18,7 @@ Human-authored Markdown agent files are only a reusable library. They are not re
 
 ## Canonical identity
 
-- source repo: `/Users/tiziano/Code/pi-multiagent`
+- source root: repository or installed package root containing `package.json`
 - GitHub repo: `https://github.com/Tiziano-AI/pi-multiagent`
 - npm package: `pi-multiagent`
 - Pi package manifest: `package.json` `pi.extensions` and `pi.skills`
@@ -265,9 +265,10 @@ pnpm test
 pnpm run smoke:pi
 pnpm run check:pack
 pnpm run check:pi-load
+pnpm run check:public-docs
 pnpm run check:source-size
 # or all local gates:
 pnpm run gate
 ```
 
-`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, the package-owned skill, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, `CONTINUE.md`, `PLAN.md`, and `HANDOFF.md`.
+`smoke:pi` imports the registered extension entrypoint through a local peer-dependency loader, asserts `agent_team` registration/execute wiring for catalog, validation-error, and project-confirmation paths, and executes a fake-spawn run contract for child launch shape and stdin task transport. `check:pi-load` reads `package.json`, imports the declared Pi extension paths through the same peer-dependency loader, and asserts the loaded extension registers and executes `agent_team`. `check:pack` runs `npm pack --dry-run --json` and asserts the packed artifact includes `AGENTS.md`, `VISION.md`, `LICENSE`, docs, the package-owned skill, every bundled package agent, package manifest, and every extension TypeScript source file while excluding tests, smoke scripts, runtime state, `CONTINUE.md`, `PLAN.md`, and `HANDOFF.md`. `check:public-docs` rejects machine-local public copy, stale pinned GitHub install tags, unsupported release-proof fields, broken relative Markdown links, and static package-agent catalog tables that should come from runtime catalog output.

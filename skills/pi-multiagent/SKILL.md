@@ -1,6 +1,6 @@
 ---
 name: pi-multiagent
-description: "Use when delegating work with pi-multiagent agent_team: choose inline/package agents, inspect catalog refs, build dependency graphs, serialize side effects, rely on automatic 100k upstream handoff, set timeouts, synthesize partial failures, or interpret failure provenance."
+description: "Use when using, reviewing, or changing pi-multiagent agent_team: inspect catalog refs, choose inline/package/user/project agents, build dependency graphs, serialize side effects, rely on automatic 100k upstream handoff, set timeouts, synthesize partial failures, or triage failure provenance."
 license: MIT
 ---
 
@@ -12,8 +12,8 @@ Use `agent_team` as a bounded same-session delegation graph. Choose the right su
 
 ## Fast path
 
-1. If the reusable agent choice is uncertain, call `agent_team` with `action: "catalog"` first. Search by outcome keywords such as `evidence`, `plan`, `risk`, `review`, `implementation`, or `synthesis`.
-2. Prefer inline agents for one-off task-specific roles. Use source-qualified library refs such as `package:reviewer` for recurring roles.
+1. Call `agent_team` with `action: "catalog"` for authoritative reusable-agent metadata whenever package, user, or project roles might fit. Search by outcome keywords such as `evidence`, `plan`, `risk`, `review`, `implementation`, or `synthesis`.
+2. Prefer inline agents for one-off task-specific roles. Use source-qualified library refs such as `package:reviewer` for recurring roles after confirming them in catalog output.
 3. Keep project agents denied unless the repository is trusted and approval is explicit.
 4. Give every step a concrete `task`; use `outputContract` for required format, paths, severity, or validation evidence.
 5. Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, or tool-using runs.
@@ -25,7 +25,7 @@ Use `agent_team` as a bounded same-session delegation graph. Choose the right su
 - You need package, user, or trusted project agents by source-qualified ref.
 - You need dependency steps, bounded concurrency, partial-failure synthesis, or upstream handoff.
 - You need automatic large-output handoff or failure-provenance interpretation.
-- You are changing or reviewing this package.
+- You are using, reviewing, changing, or troubleshooting this package.
 
 ## Do not use when
 
@@ -42,18 +42,30 @@ Use `agent_team` as a bounded same-session delegation graph. Choose the right su
 - `project:name`: nearest ancestor project `.pi/agents/*.md`; disabled by default and requires `projectAgents: "confirm"` or `"allow"`. The global Pi config root `~/.pi` is not a project marker.
 - Duplicate names across sources are distinct. Use the exact source-qualified ref; never use bare names.
 
-## Package agent catalog
+## Package agent roles
 
-| Ref | Use for | Default tools | Caution |
-| --- | --- | --- | --- |
-| `package:scout` | Reconnaissance: files, docs, tests, commands, runtime evidence. | `read`, `grep`, `find`, `ls`, `bash` | High thinking; no edits; bash only for safe checks. |
-| `package:planner` | Evidence-backed plan with owners, contracts, failure modes, and validation. | `read`, `grep`, `find`, `ls` | High thinking; needs enough evidence to avoid guessing. |
-| `package:critic` | Pre-implementation stress test for hidden coupling, trust gaps, regressions, data loss, and missing proof. | `read`, `grep`, `find`, `ls` | High thinking; use on a concrete proposal, not empty discovery. |
-| `package:reviewer` | Pre-release review of code, plans, diffs, tests, boundaries, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash` | High thinking; findings first; do not delegate fixes unless explicit. |
-| `package:worker` | One scoped implementation change with synchronized code, docs, tests, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | High thinking; serialize side effects and state owned files. |
-| `package:synthesizer` | Evidence-weighted fan-in that preserves conflicts and residual risk. | `read`, `grep`, `find`, `ls` | High thinking; prefer evidence quality over vote count. |
+The authoritative package-agent catalog is runtime output, not this file. Before choosing a bundled role, call catalog:
 
-Catalog rows include each ref, tools, thinking level, optional model, description, path, and SHA prefix. Cite the source-qualified ref you actually used.
+```json
+{
+  "action": "catalog",
+  "library": {
+    "sources": ["package"],
+    "query": "review validation"
+  }
+}
+```
+
+Catalog rows include each ref, tools, thinking level, optional model, description, path, and SHA prefix. Use the returned row, then cite the exact source-qualified ref you used.
+
+Use these role heuristics after checking catalog:
+
+- `package:scout`: reconnaissance across files, docs, tests, commands, and runtime evidence.
+- `package:planner`: evidence-backed plans with owners, contracts, failure modes, and validation.
+- `package:critic`: pre-implementation stress tests for hidden coupling, trust gaps, regressions, data loss, and missing proof.
+- `package:reviewer`: pre-release review of code, plans, diffs, tests, boundaries, and validation evidence.
+- `package:worker`: one scoped implementation change with synchronized code, docs, tests, and validation evidence.
+- `package:synthesizer`: evidence-weighted fan-in that preserves conflicts and residual risk.
 
 ## Graph rules
 
@@ -158,7 +170,9 @@ Do not let child-authored explanation override trusted parent/process failure fi
 
 ## References
 
-- `../../README.md`: install, examples, limits, and validation.
-- `../../ARCH.md`: runtime contract and trust boundaries.
-- `../../VISION.md`: product intent and non-goals.
-- `../../AGENTS.md`: repo-local work and release rules.
+Load these relative package files only when they unlock a decision, prevent rework, or reduce risk. They resolve from npm, git, and local installs; do not depend on a machine-specific checkout path.
+
+- [README](../../README.md): load for install commands, operator examples, public limits, and validation.
+- [ARCH](../../ARCH.md): load for runtime contracts, trust boundaries, schema ownership, lifecycle, and provenance.
+- [VISION](../../VISION.md): load for product intent, non-goals, and success criteria.
+- [AGENTS](../../AGENTS.md): load for repo-local work rules, release choreography, and package invariants.

@@ -18,29 +18,29 @@ From npm:
 pi install npm:pi-multiagent
 ```
 
-Pinned from GitHub:
+From GitHub. Append `@vX.Y.Z` to pin a release tag:
 
 ```bash
-pi install git:github.com/Tiziano-AI/pi-multiagent@v0.1.3
+pi install git:github.com/Tiziano-AI/pi-multiagent
 ```
 
-From a local checkout:
+From any local checkout:
 
 ```bash
-pi install /Users/tiziano/Code/pi-multiagent
+pi install /absolute/path/to/pi-multiagent
 ```
 
 Project-local install:
 
 ```bash
 cd /path/to/project
-pi install /Users/tiziano/Code/pi-multiagent -l
+pi install /absolute/path/to/pi-multiagent -l
 ```
 
 One run without installing:
 
 ```bash
-pi -e /Users/tiziano/Code/pi-multiagent
+pi -e /absolute/path/to/pi-multiagent
 ```
 
 After installing in a running Pi session, use `/reload`.
@@ -150,18 +150,28 @@ project:reviewer
 
 Bare library names are invalid. Use `package:reviewer`, not `reviewer`.
 
-Package agents:
+The authoritative package-agent catalog is runtime output. Query it before choosing a bundled role:
 
-| Ref | Best use | Default tools | Thinking |
-| --- | --- | --- | --- |
-| `package:scout` | Reconnaissance: files, docs, tests, commands, runtime evidence. | `read`, `grep`, `find`, `ls`, `bash` | `high` |
-| `package:planner` | Evidence-backed implementation plan with owners, contracts, failure modes, and validation. | `read`, `grep`, `find`, `ls` | `high` |
-| `package:critic` | Pre-implementation stress test for hidden coupling, trust gaps, regressions, data loss, and missing proof. | `read`, `grep`, `find`, `ls` | `high` |
-| `package:reviewer` | Pre-release review of code, plans, diffs, tests, boundaries, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash` | `high` |
-| `package:worker` | One scoped implementation change with synchronized code, docs, tests, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | `high` |
-| `package:synthesizer` | Evidence-weighted fan-in that preserves disagreement and residual risk. | `read`, `grep`, `find`, `ls` | `high` |
+```json
+{
+  "action": "catalog",
+  "library": {
+    "sources": ["package"],
+    "query": "review validation"
+  }
+}
+```
 
 Catalog output shows each source-qualified ref, declared tools, thinking level, optional model, description, file path, and SHA-256 prefix so the caller can choose and cite the prompt it used.
+
+Package-agent role heuristics:
+
+- `package:scout`: reconnaissance across files, docs, tests, commands, and runtime evidence.
+- `package:planner`: evidence-backed implementation plans with owners, contracts, failure modes, and validation.
+- `package:critic`: pre-implementation stress tests for hidden coupling, trust gaps, regressions, data loss, and missing proof.
+- `package:reviewer`: pre-release review of code, plans, diffs, tests, boundaries, and validation evidence.
+- `package:worker`: one scoped implementation change with synchronized code, docs, tests, and validation evidence.
+- `package:synthesizer`: evidence-weighted fan-in that preserves disagreement and residual risk.
 
 Library discovery is source-qualified and path-based:
 
@@ -256,13 +266,13 @@ Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted w
 ## Validate the package
 
 ```bash
-cd /Users/tiziano/Code/pi-multiagent
+cd /path/to/pi-multiagent
 pnpm run gate
 npm pack --dry-run --json
 git diff --check
 ```
 
-`pnpm run gate` runs unit tests, a fake Pi smoke test, package-load checks, package-content checks, and source-size checks.
+`pnpm run gate` runs unit tests, a fake Pi smoke test, package-load checks, package-content checks, public-doc portability checks, and source-size checks.
 
 ## Reference
 

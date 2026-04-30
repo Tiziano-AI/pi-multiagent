@@ -24,7 +24,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 
 ## Canonical identity
 
-- source repo: `/Users/tiziano/Code/pi-multiagent`
+- source root: repository or installed package root containing `package.json`
 - GitHub repo: `https://github.com/Tiziano-AI/pi-multiagent`
 - npm package: `pi-multiagent`
 - Pi extension path: `extensions/multiagent/index.ts`
@@ -87,7 +87,7 @@ npm pack --dry-run --json
 git diff --check
 ```
 
-`pnpm run gate` already runs unit tests, fake Pi smoke, package artifact assertions, package-load checks, and source-size checks.
+`pnpm run gate` already runs unit tests, fake Pi smoke, package artifact assertions, package-load checks, public-doc portability checks, and source-size checks.
 
 For live integration changes, also reload Pi and run a focused live smoke with `agent_team` covering catalog refs, bare-name rejection, source-qualified package refs, raw evidence, automatic oversized-output artifact refs, synthesis, failure provenance, and bash/project-settings denial.
 
@@ -166,7 +166,7 @@ git status -sb
 git ls-remote origin refs/heads/main
 git ls-remote --tags origin "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')"
 npm view pi-multiagent@$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version') version dist.integrity --json
-gh release view "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')" -R Tiziano-AI/pi-multiagent --json tagName,isLatest,url
+gh release view "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')" -R Tiziano-AI/pi-multiagent --json tagName,url,name,isDraft,isPrerelease,publishedAt,targetCommitish
 ```
 
 ## Working-tree rules
