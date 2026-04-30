@@ -53,6 +53,16 @@ Keep all surfaces aligned to these invariants:
 - There is no implicit per-step timeout. Encourage `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted, or tool-using runs.
 - `agent_team` is non-atomic and not crash-resumable.
 
+## Library discovery and trust lessons
+
+`agent_team` discovers reusable agents from three source-qualified libraries. Keep docs, schema copy, skill guidance, and tests clear about each search path:
+
+- `package:name`: bundled package prompts from `agents/*.md`; enabled by default.
+- `user:name`: personal prompts from `${PI_CODING_AGENT_DIR}/agents/*.md`, or `~/.pi/agent/agents/*.md` when unset; enabled by default.
+- `project:name`: nearest project `.pi/agents/*.md`; disabled by default and loaded only through explicit `projectAgents` trust.
+
+The `user-agents-dir-project-scoped` guard prevents project-controlled prompts from masquerading as trusted user prompts. It must deny user-agent directories lexically or physically contained under the current project root, including symlink escapes. It must not treat the global Pi config root `~/.pi` as a project `.pi` marker. If that diagnostic appears unexpectedly, inspect the cwd, configured user-agent dir, realpaths, and nearest `.git`/project `.pi` markers before advising callers to disable user sources.
+
 ## Runtime boundaries
 
 Pi integration depends on installed Pi extension semantics. Re-read installed Pi docs/source before changing extension hooks, tool registration, subprocess launch flags, package loading, or mode behavior:
@@ -83,28 +93,81 @@ For live integration changes, also reload Pi and run a focused live smoke with `
 
 ## Release discipline
 
-`npm publish` publishes the local filesystem selected by npm package rules, not the last Git commit. Do not publish from an uncommitted or unvalidated tree.
+`npm publish` publishes the local filesystem selected by npm package rules, not the last Git commit. Do not publish from an uncommitted or unvalidated tree. Treat release as a provenance chain from source diff to npm tarball, git tag, pushed source, and GitHub Release notes.
 
-Recommended flow:
+Full release choreography:
+
+1. Verify the working tree and intended version class.
+   - Public schema/contract replacement in `0.x` normally warrants a minor bump.
+   - Package prompt copy, docs, schema, tests, and AGENTS invariants must already be synchronized.
+2. Run final pre-version proof from repo root:
 
 ```bash
 pnpm run gate
 npm pack --dry-run --json
 git diff --check
 git status -sb
+```
+
+3. Commit the validated source change:
+
+```bash
 git add -A
 git commit -m "..."
 ```
 
-If `package.json` still needs a version bump, run `npm version <major|minor|patch|x.y.z>` after the change commit so npm creates the version commit and tag. If `package.json` is already at the intended release version, do not run `npm version`; create the matching tag after the commit instead:
+4. Create the version commit and tag. If `package.json` still needs a bump, prefer `npm version <major|minor|patch|x.y.z>` so npm updates package metadata and creates the tag. If `package.json` is already at the intended version, do not rerun `npm version`; create the matching tag after the commit instead:
 
 ```bash
+npm version minor
+# or: npm version patch
+# or: npm version 0.2.0
+# already bumped only:
 git tag "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')"
-npm publish
+```
+
+5. Re-run release-candidate proof after the version commit/tag and record the npm dry-run identity:
+
+```bash
+pnpm run gate
+npm pack --dry-run --json
+git diff --check
+git status -sb
+git tag --points-at HEAD
+```
+
+6. Stop before `npm publish` when the user asked to publish manually or when credentials/2FA make publication user-owned. Provide the exact `npm publish` command and wait.
+7. After the user confirms npm publication, verify the registry artifact before pushing:
+
+```bash
+npm view pi-multiagent@$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version') version dist.integrity dist.tarball --json
+```
+
+8. Push source and tag only after npm publication is confirmed:
+
+```bash
 git push origin main --follow-tags
 ```
 
-Only create GitHub releases after npm publish and after pushing the version commit/tag.
+9. Create a GitHub Release page after npm publish and after pushing the version commit/tag. GitHub Releases are not required for Pi installation, but they are the human/community-facing release record and should be kept aligned with npm and tags when this repo already uses them. Mark the newest release latest, include the npm install command, highlights, validation commands, and npm integrity. Do not attach tarballs unless there is a deliberate non-npm asset.
+
+```bash
+gh release create "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')" \
+  -R Tiziano-AI/pi-multiagent \
+  --title "pi-multiagent v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')" \
+  --notes-file /tmp/pi-multiagent-release.md \
+  --latest
+```
+
+10. Final remote proof:
+
+```bash
+git status -sb
+git ls-remote origin refs/heads/main
+git ls-remote --tags origin "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')"
+npm view pi-multiagent@$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version') version dist.integrity --json
+gh release view "v$(node -p 'JSON.parse(require("fs").readFileSync("package.json", "utf8")).version')" -R Tiziano-AI/pi-multiagent --json tagName,isLatest,url
+```
 
 ## Working-tree rules
 
