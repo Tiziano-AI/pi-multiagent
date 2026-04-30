@@ -37,11 +37,11 @@ The canonical public docs are `README.md`, `VISION.md`, `ARCH.md`, and `AGENTS.m
 
 The canonical package corpus also includes `skills/pi-multiagent/SKILL.md`, `skills/pi-multiagent/references/graph-cookbook.md`, `examples/graphs/*.json`, `agents/*.md`, `package.json`, and relevant tests. Keep these surfaces synchronized when behavior, schema, package metadata, package skill text, examples, validation gates, or release flow changes.
 
-The package-owned skill is a progressive-disclosure operating guide for agents deciding how to invoke, design, review, or troubleshoot `agent_team` graphs. It points back to the canonical docs rather than duplicating the full architecture.
+The package-owned skill is a progressive-disclosure operating guide for agents deciding how to invoke, design, review, troubleshoot, or improve `agent_team` graphs and this package. It points back to the canonical docs rather than duplicating the full architecture.
 
 The bundled `agents/*.md` files are not Pi skills. They are reusable `agent_team` library prompts surfaced as `package:name` refs during catalog/run calls.
 
-The graph cookbook lives in the package-owned skill reference and `examples/graphs/*.json`, with README carrying only a concise front-door summary. These examples must remain schema-valid `agent_team` inputs, but they are documentation artifacts: callers copy and adapt them rather than invoking a separate template action.
+The graph cookbook lives in the package-owned skill reference and `examples/graphs/*.json`, with README carrying human-facing install, first-success, troubleshooting, and concise example-index copy. These examples must remain schema-valid `agent_team` inputs, but they are documentation artifacts: callers copy and adapt them rather than invoking a separate template action.
 
 ## Public contract owner
 
@@ -201,7 +201,7 @@ Package, user, and project agents are addressed by source-qualified refs, so age
 
 Inline agents are authored by the calling model in the current tool call and do not cross the project-prompt trust boundary.
 
-Subprocess Pi extension/package, context-file, skill, prompt-template, theme, and system-prompt loading are separate trust boundaries. Every delegated child launch includes `--no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes --system-prompt ""`, so untrusted target repositories cannot execute `.pi/extensions`, load project `.pi/settings.json` packages, inject `AGENTS.md`/`CLAUDE.md`, inject `SYSTEM.md`, or load project/user Pi resources merely because a step uses their `cwd`. The caller must include required repo instructions/context explicitly in delegated tasks. The launcher reuses the current Pi executable/script only when both launcher paths are outside delegated denied roots; fallback resolution accepts only an executable absolute `pi` path from absolute `PATH` entries and skips candidates inside the delegated project root, including roots marked by `.git`/`.pi` files, directories, or symlinks. Bash-enabled children add a stricter preflight: any lexical or realpath ancestor `.pi/settings.json` filesystem node blocks the launch because shell execution can still be affected by project settings.
+Subprocess Pi extension/package, context-file, skill, prompt-template, theme, and system-prompt loading are separate trust boundaries. Every delegated child launch includes `--no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes --system-prompt ""`, so untrusted target repositories cannot execute `.pi/extensions`, load project `.pi/settings.json` packages, inject `AGENTS.md`/`CLAUDE.md`, inject `SYSTEM.md`, or load project/user Pi resources merely because a step uses their `cwd`. The caller must include required repo instructions/context explicitly in delegated tasks. Child Pi processes inherit the parent OS process environment needed to run Pi and provider clients; `agent_team` does not scrub environment variables or credentials. The launcher reuses the current Pi executable/script only when both launcher paths are outside delegated denied roots; fallback resolution accepts only an executable absolute `pi` path from absolute `PATH` entries and skips candidates inside the delegated project root, including roots marked by `.git`/`.pi` files, directories, or symlinks. Bash-enabled children add a stricter preflight: any lexical or realpath ancestor `.pi/settings.json` filesystem node blocks the launch because shell execution can still be affected by project settings.
 
 ## Lifecycle
 

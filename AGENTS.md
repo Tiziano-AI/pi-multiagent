@@ -71,17 +71,13 @@ The `user-agents-dir-project-scoped` guard prevents project-controlled prompts f
 
 ## Runtime boundaries
 
-Pi integration depends on installed Pi extension semantics. Re-read installed Pi docs/source before changing extension hooks, tool registration, subprocess launch flags, package loading, or mode behavior:
-
-- `/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/extensions.md`
-- `/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/docs/packages.md`
-- installed runtime under `/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent/dist/`
+Pi integration depends on installed Pi extension semantics. Before changing extension hooks, tool registration, subprocess launch flags, package loading, or mode behavior, re-read the installed `@mariozechner/pi-coding-agent` package docs and runtime in the current environment, especially `docs/extensions.md`, `docs/packages.md`, and runtime `dist/`.
 
 Do not patch or edit Pi vendor code.
 
 ## Skill ownership
 
-The `pi-multiagent` skill is owned by this repository and is included through `package.json` `pi.skills`. It teaches when and how to invoke the package tool and points to canonical docs for deeper context. The bundled `agents/*.md` files are not Pi skills; they are `agent_team` library prompts surfaced as `package:name` refs.
+The `pi-multiagent` skill is owned by this repository and is included through `package.json` `pi.skills`. It teaches agents when and how to invoke the package tool, design or adapt graphs, troubleshoot failure provenance, and improve this package through agent-team workflows under repo gates. README stays human/operator-facing; put detailed agent invocation heuristics and graph-selection procedure in the skill or cookbook. The bundled `agents/*.md` files are not Pi skills; they are `agent_team` library prompts surfaced as `package:name` refs.
 
 ## Validation gates
 

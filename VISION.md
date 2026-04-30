@@ -16,6 +16,7 @@ Without a package boundary, callers copy prompts manually, tool access is ambigu
 
 - One public tool: `agent_team`.
 - One package-owned skill: `pi-multiagent`.
+- README serves humans; the package skill serves agents, including agents improving this package under repo gates.
 - Inline agents are first-class and default to no tools.
 - Reusable agents use source-qualified refs: `package:name`, `user:name`, or `project:name`.
 - Project agents are denied by default.
@@ -32,8 +33,8 @@ Without a package boundary, callers copy prompts manually, tool access is ambigu
 - The calling agent can run inline and library-backed agents in a bounded DAG with explicit dependencies and limits.
 - Downstream agents receive evidence with clear trust framing and automatic large-output handoff.
 - Failed, blocked, timed-out, or aborted steps expose reason, cause, provenance, and usable partial evidence where available.
-- The package skill teaches safe invocation without replacing README or ARCH.
-- The graph cookbook makes advanced choreography discoverable without expanding runtime surface area.
+- The package skill teaches safe invocation, graph design, troubleshooting, and package self-improvement without replacing README or ARCH.
+- The graph cookbook makes everyday and advanced choreography discoverable without expanding runtime surface area.
 - Package checks verify schema behavior, launch boundaries, rendering, provenance, skills, graph examples, public copy, source size, and packed artifacts.
 
 ## Non-goals

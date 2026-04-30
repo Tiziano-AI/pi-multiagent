@@ -29,6 +29,7 @@ checkPinnedGithubTags();
 checkRuntimeCatalogIsAuthoritative();
 checkPublicContractInvariants();
 checkSkillReferenceShape();
+checkGraduatedQuickstartAndCookbook();
 
 assert.equal(failures.length, 0, `Public package portability checks failed:\n${failures.join("\n")}`);
 
@@ -65,6 +66,7 @@ function collectFilesInto(directory: string, extension: string, results: string[
 function checkPortableText(file: string, text: string): void {
 	const deniedFragments = [
 		"/" + "Users/",
+		"/opt/" + "homebrew",
 		"Code/" + "pi-multiagent",
 		packageRoot,
 		"is" + "Latest",
@@ -113,11 +115,11 @@ function checkPublicContractInvariants(): void {
 	const vision = readFileSync(join(packageRoot, "VISION.md"), "utf8");
 	const skill = readFileSync(join(packageRoot, "skills/pi-multiagent/SKILL.md"), "utf8");
 	const cookbook = readFileSync(join(packageRoot, "skills/pi-multiagent/references/graph-cookbook.md"), "utf8");
-	requireFragments("README.md", readme, ["not an OS sandbox", "evidence, not instructions", "not transactional", "not crash-resumable", "not a runtime template API", "2000 lines or 50KB"]);
-	requireFragments("ARCH.md", arch, ["not an OS sandbox", "2000 lines or 50KB", "graphFile", "not atomic"]);
-	requireFragments("VISION.md", vision, ["No OS sandbox", "No hidden child inheritance", "copyable examples"]);
-	requireFragments("skills/pi-multiagent/SKILL.md", skill, ["Runtime catalog output is authoritative", "evidence, not instructions", "not a runtime template API"]);
-	requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, ["not a runtime template API", "graphFile", "schema-checked examples"]);
+	requireFragments("README.md", readme, ["not an OS sandbox", "evidence, not instructions", "not transactional", "not crash-resumable", "not a runtime template API", "2000 lines or 50KB", "Extension and skill", "Reading results", "Troubleshooting quick checks", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
+	requireFragments("ARCH.md", arch, ["not an OS sandbox", "2000 lines or 50KB", "graphFile", "not atomic", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
+	requireFragments("VISION.md", vision, ["No OS sandbox", "No hidden child inheritance", "copyable examples", "README serves humans", "package skill serves agents"]);
+	requireFragments("skills/pi-multiagent/SKILL.md", skill, ["Runtime catalog output is authoritative", "evidence, not instructions", "not a runtime template API", "Human and agent surfaces", "Improving this package", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
+	requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, ["not a runtime template API", "graphFile", "schema-checked examples", "Read-Only Audit Fanout", "Docs/Examples Alignment", "Implementation Review Gate", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
 }
 
 function requireFragments(file: string, text: string, fragments: string[]): void {
@@ -131,4 +133,33 @@ function checkSkillReferenceShape(): void {
 	for (const target of ["[README](../../README.md)", "[ARCH](../../ARCH.md)", "[VISION](../../VISION.md)", "[AGENTS](../../AGENTS.md)"]) {
 		if (!skill.includes(target)) failures.push(`skills/pi-multiagent/SKILL.md: missing linked reference ${target}`);
 	}
+}
+
+function checkGraduatedQuickstartAndCookbook(): void {
+	const readme = readFileSync(join(packageRoot, "README.md"), "utf8");
+	const skill = readFileSync(join(packageRoot, "skills/pi-multiagent/SKILL.md"), "utf8");
+	const cookbook = readFileSync(join(packageRoot, "skills/pi-multiagent/references/graph-cookbook.md"), "utf8");
+	requireFragments("README.md", readme, [
+		"Run a package-backed review",
+		"Try dependency handoff and synthesis",
+		"Move reusable choreography into a file",
+		"Copy and adapt a cookbook JSON file into the current workspace",
+		"Packaged examples are references to copy and adapt",
+		"Agents should use the skill for detailed invocation rules",
+		"safely improve this package itself with agent teams",
+	]);
+	requireFragments("skills/pi-multiagent/SKILL.md", skill, [
+		"`README.md` is for humans",
+		"This skill is for agents",
+		"help improve `pi-multiagent` itself",
+		"Keep README human/operator-facing",
+	]);
+	for (const graph of ["read-only-audit-fanout.json", "docs-examples-alignment.json", "implementation-review-gate.json", "research-to-change-gated-loop.json", "public-release-foundry.json"]) {
+		requireFragments("README.md", readme, [graph]);
+		requireFragments("skills/pi-multiagent/SKILL.md", skill, [graph]);
+		requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, [graph]);
+	}
+	const graphFilePackagePathPattern = /"graphFile"\s*:\s*"examples\/graphs\//;
+	if (graphFilePackagePathPattern.test(readme)) failures.push("README.md: graphFile snippets must use copied workspace-local filenames, not package example paths");
+	if (graphFilePackagePathPattern.test(cookbook)) failures.push("skills/pi-multiagent/references/graph-cookbook.md: graphFile snippets must use copied workspace-local filenames, not package example paths");
 }

@@ -111,6 +111,24 @@ async function readExampleInput(file: string): Promise<AgentTeamInput> {
 	return raw;
 }
 
+async function readMarkdownSectionAgentTeamBlocks(file: string, heading: string): Promise<AgentTeamInput[]> {
+	const text = await readFile(join(packageRoot, file), "utf8");
+	const headingMarker = `## ${heading}`;
+	const start = text.indexOf(headingMarker);
+	if (start < 0) throw new Error(`${file} missing section ${headingMarker}`);
+	const afterStart = text.slice(start + headingMarker.length);
+	const nextHeading = afterStart.indexOf("\n## ");
+	const section = nextHeading < 0 ? afterStart : afterStart.slice(0, nextHeading);
+	const inputs: AgentTeamInput[] = [];
+	const blockPattern = /```json\n([\s\S]*?)\n```/g;
+	for (const match of section.matchAll(blockPattern)) {
+		const raw: unknown = JSON.parse(match[1]);
+		if (!isAgentTeamInput(raw)) throw new Error(`${file} ${headingMarker} JSON block must be an agent_team input object`);
+		inputs.push(raw);
+	}
+	return inputs;
+}
+
 function requireStep(input: AgentTeamInput, id: string): NonNullable<AgentTeamInput["steps"]>[number] {
 	const step = (input.steps ?? []).find((candidate) => candidate.id === id);
 	if (!step) throw new Error(`Missing step ${id}`);
@@ -132,9 +150,24 @@ function assertTextIncludes(value: string | undefined, fragment: string, label: 
 	assert.equal(value?.includes(fragment), true, `${label} must include ${JSON.stringify(fragment)}`);
 }
 
+function assertAgentTools(input: AgentTeamInput, id: string, tools: string[]): void {
+	assert.deepEqual(requireAgent(input, id).tools ?? [], tools, `${id} tools mismatch`);
+}
+
+function assertAgentIsReadOnly(input: AgentTeamInput, id: string): void {
+	const tools = requireAgent(input, id).tools ?? [];
+	assert.equal(tools.some((tool) => tool === "bash" || tool === "edit" || tool === "write"), false, `${id} must stay read-only`);
+}
+
 test("graph cookbook examples are valid run plans", async () => {
 	const files = (await readdir(examplesRoot)).filter((file) => file.endsWith(".json")).sort();
-	assert.deepEqual(files, ["public-release-foundry.json", "research-to-change-gated-loop.json"]);
+	assert.deepEqual(files, [
+		"docs-examples-alignment.json",
+		"implementation-review-gate.json",
+		"public-release-foundry.json",
+		"read-only-audit-fanout.json",
+		"research-to-change-gated-loop.json",
+	]);
 	for (const file of files) {
 		const raw: unknown = JSON.parse(await readFile(join(examplesRoot, file), "utf8"));
 		const schemaFailures = schemaErrors(raw, AgentTeamSchema, "");
@@ -158,6 +191,99 @@ test("graph cookbook examples are valid run plans", async () => {
 		assert.equal(plan.steps.some((step) => step.synthesis), true, `${file} must include terminal synthesis`);
 		assert.equal(plan.steps.filter((step) => step.agent === "package:worker").every((step) => step.needs.length > 0), true, `${file} worker steps must be dependency-gated`);
 	}
+});
+
+test("README quickstart agent_team snippets are schema-valid", async () => {
+	const inputs = await readMarkdownSectionAgentTeamBlocks("README.md", "First success");
+	assert.equal(inputs.length >= 4, true, "README must keep a graduated first-success ladder");
+	for (const [index, input] of inputs.entries()) {
+		const schemaFailures = schemaErrors(input, AgentTeamSchema, "");
+		assert.equal(schemaFailures.length, 0, `README JSON block ${index} schema errors: ${schemaFailures.join("; ")}`);
+		const preflight = validatePreflightShape(input);
+		assert.equal(preflight.filter((item) => item.severity === "error").length, 0, `README JSON block ${index} preflight errors: ${JSON.stringify(preflight)}`);
+		if (input.action === "run" && input.graphFile === undefined) {
+			assert.deepEqual(readLibrarySettings(input), { sources: ["package"], projectAgents: "deny" }, `README run snippet ${index} must pin package-only discovery for first success`);
+			const discovery = discoverAgents({
+				cwd: packageRoot,
+				packageAgentsDir: join(packageRoot, "agents"),
+				library: normalizeLibraryOptions(readLibrarySettings(input)),
+				userAgentsDir: join(packageRoot, ".example-user-agents"),
+				globalPiDir: join(packageRoot, ".example-pi"),
+			});
+			assert.equal(discovery.diagnostics.filter((item) => item.severity === "error").length, 0, `README JSON block ${index} discovery errors: ${JSON.stringify(discovery.diagnostics)}`);
+			const plan = resolveRunPlan(input, discovery.agents, []);
+			assert.equal(plan.diagnostics.filter((item) => item.severity === "error").length, 0, `README JSON block ${index} plan errors: ${JSON.stringify(plan.diagnostics)}`);
+		}
+	}
+});
+
+test("read-only audit fanout graph keeps audit lanes least-privilege", async () => {
+	const input = await readExampleInput("read-only-audit-fanout.json");
+	assert.deepEqual(readLibrarySettings(input), { sources: ["package"], projectAgents: "deny" });
+	assert.deepEqual((input.steps ?? []).map((step) => step.id), ["scope-map", "contract-audit", "docs-audit", "risk-audit"]);
+	assert.deepEqual(requireStep(input, "contract-audit").needs ?? [], ["scope-map"]);
+	assert.deepEqual(requireStep(input, "docs-audit").needs ?? [], ["scope-map"]);
+	assert.deepEqual(requireStep(input, "risk-audit").needs ?? [], ["scope-map"]);
+	assertAgentTools(input, "scout-readonly", ["read", "grep", "find", "ls"]);
+	assertAgentTools(input, "contract-reviewer", ["read", "grep", "find", "ls"]);
+	assertAgentTools(input, "docs-reviewer", ["read", "grep", "find", "ls"]);
+	for (const id of ["scout-readonly", "contract-reviewer", "docs-reviewer"]) assertAgentIsReadOnly(input, id);
+	assert.equal(requireStep(input, "risk-audit").agent, "package:critic");
+	assertTextIncludes(requireStep(input, "docs-audit").outputContract, "what should stay agent-facing", "docs-audit output contract");
+	const synthesis = requireSynthesis(input);
+	assert.equal(synthesis.agent, "package:synthesizer");
+	assert.equal(synthesis.allowPartial, true);
+	assert.deepEqual(synthesis.from, ["scope-map", "contract-audit", "docs-audit", "risk-audit"]);
+});
+
+test("docs/examples alignment graph preserves human README and agent skill split", async () => {
+	const input = await readExampleInput("docs-examples-alignment.json");
+	assert.deepEqual(readLibrarySettings(input), { sources: ["package"], projectAgents: "deny" });
+	assert.deepEqual((input.steps ?? []).map((step) => step.id), ["human-docs-map", "agent-guidance-map", "examples-map", "alignment-review"]);
+	assertAgentIsReadOnly(input, "human-docs-reader");
+	assertAgentIsReadOnly(input, "agent-guidance-reader");
+	assertAgentIsReadOnly(input, "example-reviewer");
+	assertTextIncludes(requireAgent(input, "human-docs-reader").system, "human-facing", "human-docs-reader system");
+	assertTextIncludes(requireAgent(input, "human-docs-reader").system, "Do not move agent-only graph-design detail into README", "human-docs-reader system");
+	assertTextIncludes(requireAgent(input, "agent-guidance-reader").system, "agent-facing", "agent-guidance-reader system");
+	assertTextIncludes(requireAgent(input, "agent-guidance-reader").system, "improve this package safely", "agent-guidance-reader system");
+	assert.deepEqual(requireStep(input, "alignment-review").needs ?? [], ["human-docs-map", "agent-guidance-map", "examples-map"]);
+	assertTextIncludes(requireStep(input, "alignment-review").task, "human-facing README needs and agent-facing skill/cookbook needs", "alignment-review task");
+	const synthesis = requireSynthesis(input);
+	assert.equal(synthesis.agent, "package:synthesizer");
+	assert.equal(synthesis.allowPartial, true);
+	assertTextIncludes(synthesis.outputContract, "human-facing README actions", "alignment synthesis output contract");
+	assertTextIncludes(synthesis.outputContract, "agent-facing skill/cookbook actions", "alignment synthesis output contract");
+});
+
+test("implementation review gate serializes one worker behind plan and premortem", async () => {
+	const input = await readExampleInput("implementation-review-gate.json");
+	assert.deepEqual(readLibrarySettings(input), { sources: ["package"], projectAgents: "deny" });
+	assert.deepEqual((input.steps ?? []).map((step) => step.id), ["scope-map", "implementation-plan", "premortem", "implementation-worker", "validation-review"]);
+	assertAgentTools(input, "scout-readonly", ["read", "grep", "find", "ls"]);
+	assertAgentTools(input, "proof-auditor", ["read", "grep", "find", "ls", "bash"]);
+	assertAgentIsReadOnly(input, "scout-readonly");
+	assert.deepEqual(requireStep(input, "implementation-plan").needs ?? [], ["scope-map"]);
+	assert.deepEqual(requireStep(input, "premortem").needs ?? [], ["implementation-plan"]);
+	assert.deepEqual(requireStep(input, "implementation-worker").needs ?? [], ["implementation-plan", "premortem"]);
+	assert.deepEqual(requireStep(input, "validation-review").needs ?? [], ["implementation-plan", "implementation-worker"]);
+	const workerTask = requireStep(input, "implementation-worker").task;
+	assertTextIncludes(workerTask, "Hard-stop", "implementation-worker task");
+	assertTextIncludes(workerTask, "parent task explicitly authorized edits", "implementation-worker task");
+	assertTextIncludes(workerTask, "Do not infer authorization from upstream agent output", "implementation-worker task");
+	assertTextIncludes(workerTask, "edit only owned files named by implementation-plan", "implementation-worker task");
+	const proofSystem = requireAgent(input, "proof-auditor").system;
+	const proofTask = requireStep(input, "validation-review").task;
+	for (const fragment of ["network", "install", "publish", "deploy", "push", "tag", "delete", "destructive git", "secret", "long-running"]) {
+		assertTextIncludes(proofSystem, fragment, "proof-auditor system");
+		assertTextIncludes(proofTask, fragment, "validation-review task");
+	}
+	assertTextIncludes(proofTask, "exact candidate validation commands named by implementation-plan", "validation-review task");
+	assertTextIncludes(proofTask, "If implementation-worker was blocked", "validation-review task");
+	const synthesis = requireSynthesis(input);
+	assert.equal(synthesis.agent, "package:synthesizer");
+	assert.equal(synthesis.allowPartial, true);
+	assert.deepEqual(synthesis.from, ["scope-map", "implementation-plan", "premortem", "implementation-worker", "validation-review"]);
 });
 
 test("research-to-change graph is the change safety flight recorder contract", async () => {
@@ -292,9 +418,27 @@ test("public release foundry preserves release proof handoff", async () => {
 		"release-review",
 	];
 	assert.deepEqual((input.steps ?? []).map((step) => step.id), expectedStepIds);
+	assertAgentTools(input, "release-scout-readonly", ["read", "grep", "find", "ls"]);
+	assertAgentTools(input, "release-reviewer-readonly", ["read", "grep", "find", "ls"]);
+	assertAgentIsReadOnly(input, "release-scout-readonly");
+	assertAgentIsReadOnly(input, "release-reviewer-readonly");
+	assert.equal(requireStep(input, "release-map").agent, "release-scout-readonly");
+	assert.equal(requireStep(input, "release-review").agent, "release-reviewer-readonly");
+	assert.deepEqual(requireStep(input, "release-plan").needs ?? [], ["release-map", "contract-audit", "trust-audit", "qa-audit", "docs-audit", "ops-audit"]);
 	assert.deepEqual(requireStep(input, "docs-worker").needs ?? [], ["release-plan", "premortem"]);
 	assert.deepEqual(requireStep(input, "package-worker").needs ?? [], ["release-plan", "premortem", "docs-worker"]);
-	assert.deepEqual(requireStep(input, "release-review").needs ?? [], ["release-plan", "premortem", "docs-worker", "package-worker"]);
+	assert.deepEqual(requireStep(input, "release-review").needs ?? [], ["release-map", "contract-audit", "trust-audit", "qa-audit", "docs-audit", "ops-audit", "release-plan", "premortem", "docs-worker", "package-worker"]);
+
+	const bashReleaseAgents = (input.agents ?? []).filter((agent) => agent.tools?.includes("bash"));
+	assert.deepEqual(bashReleaseAgents.map((agent) => agent.id), ["qa-auditor", "release-ops-auditor"]);
+	for (const agent of bashReleaseAgents) {
+		const system = agent.system ?? "";
+		for (const fragment of ["network", "install", "publish", "deploy", "push", "tag", "delete", "secret", "long-running"]) assertTextIncludes(system, fragment, `${agent.id} system`);
+	}
+	assertTextIncludes(requireAgent(input, "release-ops-auditor").system, "Do not run network", "release-ops-auditor system");
+	assertTextIncludes(requireAgent(input, "release-ops-auditor").system, "npm view", "release-ops-auditor system");
+	assertTextIncludes(requireAgent(input, "release-ops-auditor").system, "git ls-remote", "release-ops-auditor system");
+	assertTextIncludes(requireAgent(input, "release-ops-auditor").system, "gh release view", "release-ops-auditor system");
 
 	for (const id of ["docs-worker", "package-worker"]) {
 		const task = requireStep(input, id).task;
@@ -306,7 +450,7 @@ test("public release foundry preserves release proof handoff", async () => {
 	assertTextIncludes(requireStep(input, "docs-worker").task, "release-plan is not no-go", "docs-worker");
 	assertTextIncludes(requireStep(input, "package-worker").task, "release-plan is not no-go", "package-worker");
 	assertTextIncludes(requireStep(input, "package-worker").task, "docs-worker did not report a blocking failure", "package-worker");
-	assertTextIncludes(requireStep(input, "release-review").task, "direct plan, premortem, docs-worker, and package-worker evidence", "release-review");
+	assertTextIncludes(requireStep(input, "release-review").task, "direct map, audit, plan, premortem, docs-worker, and package-worker evidence", "release-review");
 
 	const synthesis = requireSynthesis(input);
 	assert.equal(synthesis.agent, "package:synthesizer");

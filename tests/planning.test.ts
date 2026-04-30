@@ -52,7 +52,7 @@ test("validatePreflightShape rejects invalid run shapes before confirmation", ()
 });
 
 test("validatePreflightShape treats graphFile as a complete run graph wrapper", () => {
-	const wrapper = validatePreflightShape({ action: "run", graphFile: "examples/graphs/research-to-change-gated-loop.json" });
+	const wrapper = validatePreflightShape({ action: "run", graphFile: "research-to-change-gated-loop.json" });
 	assert.equal(wrapper.some((item) => item.code === "objective-required"), false);
 	assert.equal(wrapper.some((item) => item.code === "steps-required"), false);
 

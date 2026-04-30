@@ -49,7 +49,18 @@ pi -e /absolute/path/to/pi-multiagent
 
 After installing in a running Pi session, use `/reload`.
 
+## Extension and skill
+
+Installing this package gives Pi two related surfaces:
+
+- **Extension tool:** `agent_team`, the tool a parent assistant calls to run isolated child Pi processes.
+- **Package skill:** `/skill:pi-multiagent`, the agent-facing operating guide for when and how to catalog agents, design graphs, use `graphFile`, troubleshoot failures, and safely improve this package itself with agent teams.
+
+This README is for humans installing, evaluating, and operating the package. Agents should use the skill for detailed invocation rules and graph-design guidance.
+
 ## First success
+
+This ladder keeps human first success small. Agents that need deeper graph-design rules should load `/skill:pi-multiagent`.
 
 1. **Discover package agents.** Catalog output is the authoritative package-agent metadata: refs, tools, thinking level, model, description, path, and SHA prefix.
 
@@ -63,12 +74,48 @@ After installing in a running Pi session, use `/reload`.
 }
 ```
 
-2. **Run a tiny DAG.** This keeps the first call small while showing dependency handoff and synthesis.
+2. **Run a package-backed review.** This proves source-qualified refs and explicit tool narrowing without writing files.
+
+```json
+{
+  "action": "run",
+  "objective": "Review whether the current repository has enough docs for a first-time operator.",
+  "library": {
+    "sources": ["package"],
+    "projectAgents": "deny"
+  },
+  "agents": [
+    {
+      "id": "reviewer-readonly",
+      "kind": "library",
+      "ref": "package:reviewer",
+      "tools": ["read", "grep", "find", "ls"],
+      "outputContract": "Findings first with severity, evidence path, operator impact, and concrete fix. Do not edit or run commands."
+    }
+  ],
+  "steps": [
+    {
+      "id": "review-docs",
+      "agent": "reviewer-readonly",
+      "task": "Review the current repository's README and adjacent docs for first-time operator clarity."
+    }
+  ],
+  "limits": {
+    "timeoutSecondsPerStep": 600
+  }
+}
+```
+
+3. **Try dependency handoff and synthesis.** This shows one step feeding evidence to another, then a final decision.
 
 ```json
 {
   "action": "run",
   "objective": "Review whether the planned change is safe.",
+  "library": {
+    "sources": ["package"],
+    "projectAgents": "deny"
+  },
   "agents": [
     {
       "id": "mapper",
@@ -108,16 +155,23 @@ After installing in a running Pi session, use `/reload`.
 }
 ```
 
-3. **Move complex choreography into a file.** `graphFile` loads a complete static run graph; it is not a runtime template API or parameterization system.
+4. **Move reusable choreography into a file.** Copy and adapt a cookbook JSON file into the current workspace, then run it with `graphFile`. `graphFile` loads a complete static run graph from cwd; it is not a runtime template API or parameterization system.
 
 ```json
 {
   "action": "run",
-  "graphFile": "examples/graphs/research-to-change-gated-loop.json"
+  "graphFile": "read-only-audit-fanout.json"
 }
 ```
 
-`graphFile` is mutually exclusive with inline run fields. It must be a relative `.json` path to a regular file inside the current working directory; nested `graphFile` wrappers and symlinks are denied.
+Packaged examples are references to copy and adapt; `graphFile` does not load package examples by name. It is mutually exclusive with inline run fields and must be a relative `.json` path to a regular file inside the current working directory; nested `graphFile` wrappers and symlinks are denied.
+
+## Reading results
+
+- Catalog output shows active sources and source-qualified refs. Treat it as authoritative for package-agent metadata.
+- Run output starts with the objective and final synthesis when present, then step summary, step outputs, and diagnostics.
+- Failed, blocked, timed-out, or aborted steps include status, `failureCause`, and failure provenance. Child-authored explanations do not override parent-observed process facts.
+- Large upstream outputs may appear as mode `0600` file refs; receivers get `read` only when that artifact handoff needs it.
 
 ## Use when
 
@@ -172,14 +226,7 @@ Library discovery is explicit:
 
 `library.query` is a case-insensitive substring filter over catalog metadata, not full prompt bodies. Role names or refs are the safest queries. Duplicate names across sources coexist because the source is part of the ref.
 
-Package-agent role heuristics after checking the runtime catalog:
-
-- `package:scout`: reconnaissance across files, docs, tests, commands, and runtime evidence.
-- `package:planner`: evidence-backed implementation plans with owners, contracts, failure modes, and validation.
-- `package:critic`: stress tests for hidden coupling, trust gaps, regressions, data loss, and missing proof.
-- `package:reviewer`: review of code, plans, diffs, tests, boundaries, and validation evidence.
-- `package:worker`: one scoped implementation change with synchronized code, docs, tests, and validation evidence.
-- `package:synthesizer`: evidence-weighted fan-in that preserves disagreement and residual risk.
+For package-agent role-selection heuristics, graph design, and package self-improvement workflows, have the agent load `/skill:pi-multiagent` after checking the runtime catalog.
 
 ## Trust boundary
 
@@ -208,50 +255,26 @@ Tool access is an allowlist:
 
 This package currently allows `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write` for child tool allowlists. Add `bash` only when command execution is needed and trusted. Bash-enabled children are refused in cwd trees with `.pi/settings.json` because project settings can alter shell behavior.
 
+Child Pi processes inherit the parent OS process environment needed to run Pi and provider clients. `agent_team` does not scrub environment variables or credentials. Do not grant `bash` to untrusted children.
+
 `agent_team` is not an OS sandbox, not a same-UID filesystem isolation boundary, and not a secret filter. Mode `0600` temp artifacts protect against other OS users, not against children that were explicitly given filesystem-capable tools.
 
 ## Graph cookbook
 
 The cookbook contains schema-checked starting graphs. They are documentation artifacts, not a runtime template API. Copy a JSON file, run catalog to verify refs in the current environment, replace the objective, tasks, and output contracts, then run the edited graph inline or through `graphFile`.
 
-### Change Safety Flight Recorder / Research-to-Change Gated Loop
+Everyday examples:
 
-Example: [`examples/graphs/research-to-change-gated-loop.json`](examples/graphs/research-to-change-gated-loop.json)
+- [`examples/graphs/read-only-audit-fanout.json`](examples/graphs/read-only-audit-fanout.json): read-only mapping plus contract, docs, and risk review lanes.
+- [`examples/graphs/docs-examples-alignment.json`](examples/graphs/docs-examples-alignment.json): checks that human README copy, agent skill guidance, cookbook guidance, examples, and tests stay aligned.
+- [`examples/graphs/implementation-review-gate.json`](examples/graphs/implementation-review-gate.json): maps a scoped change, plans it, stress-tests it, runs one serialized authorized worker, then reviews validation.
 
-Use when the request is ambiguous and the safe path is not known. It stages broad and focused discovery, competing minimal/structural/no-change plans, a validation contract, implementation-contract synthesis, premortem, serialized authorized workers, post-change proof/review fan-out, and final decision synthesis.
+Advanced examples:
 
-```text
-broad-discovery
-  -> focused-discovery
-  -> minimal-plan + structural-plan + no-change-case + validation-contract
-  -> implementation-contract
-  -> premortem
-  -> core-worker
-  -> tests-docs-worker
-  -> runtime-review + validation-review + risk-review
-  -> final synthesis allowPartial:true
-```
+- [`examples/graphs/research-to-change-gated-loop.json`](examples/graphs/research-to-change-gated-loop.json): ambiguous product/runtime changes with discovery, competing plans, validation contract, serialized workers, reviews, and final triage.
+- [`examples/graphs/public-release-foundry.json`](examples/graphs/public-release-foundry.json): package, extension, CLI, skill, or public artifact release readiness with independent audits and human-owned publish/push/tag stop points.
 
-It demonstrates least-privilege library bindings for read-only scout/reviewer lanes, a bounded bash proof lane, worker hard stops, explicit validation obligations, and final partial synthesis that reports failed or blocked lanes without treating them as success.
-
-### Public Release Foundry
-
-Example: [`examples/graphs/public-release-foundry.json`](examples/graphs/public-release-foundry.json)
-
-Use when a package, extension, CLI, or public artifact needs release-quality proof. It maps release surfaces, runs independent contract/trust/QA/docs/ops audits, plans release readiness, stress-tests the plan, serializes authorized updates, reviews the final candidate, and synthesizes ship/block/needs-work/defer.
-
-```text
-release-map
-  -> contract-audit + trust-audit + qa-audit + docs-audit + ops-audit
-  -> release-plan
-  -> premortem
-  -> docs-worker
-  -> package-worker
-  -> release-review
-  -> final synthesis
-```
-
-It keeps publication, pushing, tagging, and destructive release actions behind explicit human approval while preserving proof gaps and minority risks.
+For graph selection, adaptation rules, and safety gates, have the agent load `/skill:pi-multiagent` and its graph cookbook reference.
 
 ## Handoff, output, and failures
 
@@ -269,6 +292,18 @@ The generated handoff keeps failure reason, first observed cause, and provenance
 Failures keep parent-observed facts separate from child-authored text. Failed and blocked steps include the terminal reason, first observed cause, and structured failure provenance. Retryable child Pi provider errors can auto-retry inside the child process; retry lifecycle events remain diagnostics.
 
 `agent_team` is not transactional and not crash-resumable. Child edits are real workspace changes. If a run crashes, times out, or is aborted, inspect the workspace before retrying side-effectful work.
+
+## Troubleshooting quick checks
+
+| Symptom | Check |
+| --- | --- |
+| Catalog has no expected role | Confirm `library.sources`, query spelling, and whether the role is package, user, or trusted project. |
+| Bare ref is rejected | Use a source-qualified ref such as `package:reviewer`; bare library names are invalid. |
+| Project agents do not load | `projectAgents` defaults to `deny`; `confirm` fails closed without UI; use `allow` only for trusted repositories. |
+| `graphFile` is rejected | Use a relative `.json` regular file inside cwd; do not pass inline run fields with `graphFile`. |
+| Bash child is refused | The step cwd is inside a tree with `.pi/settings.json`; remove `bash`, change cwd, or run outside that project-settings tree. |
+| Downstream step is blocked | Inspect failed dependency status, `failureCause`, and failure provenance before retrying. |
+| Run appears stuck | Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, or tool-using graphs. |
 
 ## Limits
 
@@ -294,7 +329,7 @@ Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted w
 | Surface | Purpose |
 | --- | --- |
 | `agent_team` | Model-facing tool registered by the Pi extension. |
-| `/skill:pi-multiagent` | Progressive-disclosure guidance for using, reviewing, or changing `agent_team`. |
+| `/skill:pi-multiagent` | Agent-facing guidance for using, reviewing, troubleshooting, and improving `agent_team` and this package with bounded teams. |
 | `agents/*.md` | Reusable library prompts addressed as `package:name`. |
 | `examples/graphs/*.json` | Schema-checked cookbook examples. |
 | `README.md` | Front-facing operator and evaluator guide. |

@@ -1,6 +1,15 @@
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const PACKAGE_ROOT = "/opt/homebrew/lib/node_modules/@mariozechner/pi-coding-agent";
+function resolvePackageRoot() {
+	const explicitRoot = process.env.PI_CODING_AGENT_PACKAGE_ROOT;
+	if (explicitRoot && explicitRoot.length > 0) return explicitRoot;
+	const globalNodeModules = execFileSync("npm", ["--silent", "root", "-g"], { encoding: "utf8" }).trim();
+	return join(globalNodeModules, "@mariozechner/pi-coding-agent");
+}
+
+const PACKAGE_ROOT = resolvePackageRoot();
 const MAPPINGS = new Map([
 	["@mariozechner/pi-coding-agent", `${PACKAGE_ROOT}/dist/index.js`],
 	["@mariozechner/pi-ai", `${PACKAGE_ROOT}/node_modules/@mariozechner/pi-ai/dist/index.js`],
