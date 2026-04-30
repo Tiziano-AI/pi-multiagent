@@ -1,6 +1,6 @@
 {
   "name": "pi-multiagent",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "type": "module",
   "description": "Pi package for isolated same-session delegation.",
   "keywords": [
