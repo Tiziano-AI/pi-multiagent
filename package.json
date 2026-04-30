@@ -26,6 +26,7 @@
     "ARCH.md",
     "LICENSE",
     "agents/*.md",
+    "assets/*.webp",
     "examples/**/*.json",
     "skills/**/*.md",
     "extensions/**/*.ts"
@@ -51,6 +52,7 @@
     ],
     "skills": [
       "./skills"
-    ]
+    ],
+    "image": "https://unpkg.com/pi-multiagent/assets/pi-multiagent-gallery.webp"
   }
 }

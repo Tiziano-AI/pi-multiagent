@@ -332,6 +332,7 @@ Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted w
 | `/skill:pi-multiagent` | Agent-facing guidance for using, reviewing, troubleshooting, and improving `agent_team` and this package with bounded teams. |
 | `agents/*.md` | Reusable library prompts addressed as `package:name`. |
 | `examples/graphs/*.json` | Schema-checked cookbook examples. |
+| `assets/pi-multiagent-gallery.webp` | Pi package-gallery preview image referenced by `package.json` `pi.image`. |
 | `README.md` | Front-facing operator and evaluator guide. |
 | `ARCH.md` | Normative runtime contract, trust boundary, lifecycle, and provenance owner. |
 | `VISION.md` | Product purpose, principles, success criteria, and non-goals. |

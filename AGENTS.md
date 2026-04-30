@@ -6,7 +6,7 @@ This file is the repo-local operating guide for agents working in `pi-multiagent
 
 ## Canonical corpus
 
-The canonical public docs are `README.md`, `VISION.md`, `ARCH.md`, and `AGENTS.md`. The broader canonical package corpus also includes the package-owned skill, graph cookbook, schema-checked graph examples, bundled agents, package metadata, extension runtime, and relevant tests.
+The canonical public docs are `README.md`, `VISION.md`, `ARCH.md`, and `AGENTS.md`. The broader canonical package corpus also includes the package-owned skill, graph cookbook, schema-checked graph examples, bundled agents, package-gallery asset, package metadata, extension runtime, and relevant tests.
 
 Read in this order when the task touches product, docs, packaging, or runtime behavior:
 
@@ -15,7 +15,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 3. `ARCH.md` — architecture contract, schema owner, trust boundary, lifecycle, and provenance.
 4. `skills/pi-multiagent/SKILL.md` — package-owned progressive-disclosure guide for using, reviewing, or troubleshooting `agent_team`.
 5. `skills/pi-multiagent/references/graph-cookbook.md` and `examples/graphs/*.json` — graph choreography examples and schema-checked templates.
-6. `package.json` — npm identity, Pi manifest, scripts, file inclusion, and peer dependencies.
+6. `package.json` and `assets/pi-multiagent-gallery.webp` — npm identity, Pi manifest, gallery image, scripts, file inclusion, and peer dependencies.
 7. `extensions/multiagent/index.ts` — extension entry point and `agent_team` registration.
 8. `extensions/multiagent/src/schemas.ts` and `extensions/multiagent/src/planning.ts` — public input contract and runtime validation.
 9. `extensions/multiagent/src/delegation.ts`, `handoff.ts`, `child-launch.ts`, `child-runtime.ts`, `json-events.ts`, `result-format.ts`, and `failure-provenance.ts` — execution, automatic upstream handoff, launch boundary, capture, and model-facing output.
@@ -31,6 +31,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 - GitHub repo: `https://github.com/Tiziano-AI/pi-multiagent`
 - npm package: `pi-multiagent`
 - Pi extension path: `extensions/multiagent/index.ts`
+- Pi gallery image path: `assets/pi-multiagent-gallery.webp`
 - Pi skill path: `skills/pi-multiagent/SKILL.md`
 - graph cookbook path: `skills/pi-multiagent/references/graph-cookbook.md`
 - public tool: `agent_team`
@@ -179,7 +180,7 @@ Do not commit credentials, `.npmrc`, `.env*`, local Pi config, generated tarball
 
 ## Documentation alignment checklist
 
-When behavior, schema, package metadata, package skill text, bundled agent prompts, install paths, validation gates, or release flow changes, update all relevant surfaces in the same pass:
+When behavior, schema, package metadata, package-gallery media, package skill text, bundled agent prompts, install paths, validation gates, or release flow changes, update all relevant surfaces in the same pass:
 
 - `VISION.md` for product intent changes.
 - `README.md` for front-facing user/operator behavior: clear, concise, high-signal, and not a dense duplicate of ARCH.

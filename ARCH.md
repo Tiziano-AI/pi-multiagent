@@ -21,13 +21,14 @@ Human-authored Markdown agent files are only a reusable library. They are not re
 - source root: repository or installed package root containing `package.json`
 - GitHub repo: `https://github.com/Tiziano-AI/pi-multiagent`
 - npm package: `pi-multiagent`
-- Pi package manifest: `package.json` `pi.extensions` and `pi.skills`
+- Pi package manifest: `package.json` `pi.extensions`, `pi.skills`, and `pi.image`
 - extension path: `extensions/multiagent/index.ts`
 - public tool: `agent_team`
 - package-owned skill: `skills/pi-multiagent/SKILL.md`
 - skill graph cookbook: `skills/pi-multiagent/references/graph-cookbook.md`
 - bundled reusable agents: `agents/*.md`
 - schema-checked graph examples: `examples/graphs/*.json`
+- package-gallery image: `assets/pi-multiagent-gallery.webp`
 
 Runtime package installs under `~/.pi/agent/` or project `.pi/` settings are integration mountpoints, not source owners.
 
@@ -35,7 +36,7 @@ Runtime package installs under `~/.pi/agent/` or project `.pi/` settings are int
 
 The canonical public docs are `README.md`, `VISION.md`, `ARCH.md`, and `AGENTS.md`. `README.md` is the front-facing operator/evaluator guide, `VISION.md` owns product intent and non-goals, `ARCH.md` owns the normative runtime contract, and `AGENTS.md` owns repo-local work rules.
 
-The canonical package corpus also includes `skills/pi-multiagent/SKILL.md`, `skills/pi-multiagent/references/graph-cookbook.md`, `examples/graphs/*.json`, `agents/*.md`, `package.json`, and relevant tests. Keep these surfaces synchronized when behavior, schema, package metadata, package skill text, examples, validation gates, or release flow changes.
+The canonical package corpus also includes `skills/pi-multiagent/SKILL.md`, `skills/pi-multiagent/references/graph-cookbook.md`, `examples/graphs/*.json`, `agents/*.md`, `assets/pi-multiagent-gallery.webp`, `package.json`, and relevant tests. Keep these surfaces synchronized when behavior, schema, package metadata, package skill text, examples, validation gates, package-gallery media, or release flow changes.
 
 The package-owned skill is a progressive-disclosure operating guide for agents deciding how to invoke, design, review, troubleshoot, or improve `agent_team` graphs and this package. It points back to the canonical docs rather than duplicating the full architecture.
 

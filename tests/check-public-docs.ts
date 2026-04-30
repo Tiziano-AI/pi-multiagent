@@ -30,6 +30,7 @@ checkRuntimeCatalogIsAuthoritative();
 checkPublicContractInvariants();
 checkSkillReferenceShape();
 checkGraduatedQuickstartAndCookbook();
+checkPackageGalleryMetadata();
 
 assert.equal(failures.length, 0, `Public package portability checks failed:\n${failures.join("\n")}`);
 
@@ -39,7 +40,7 @@ function readPackageVersion(): string {
 	return parsed.version;
 }
 
-function isObject(value: unknown): value is { version?: unknown } {
+function isObject(value: unknown): value is { [key: string]: unknown } {
 	return typeof value === "object" && value !== null;
 }
 
@@ -133,6 +134,46 @@ function checkSkillReferenceShape(): void {
 	for (const target of ["[README](../../README.md)", "[ARCH](../../ARCH.md)", "[VISION](../../VISION.md)", "[AGENTS](../../AGENTS.md)"]) {
 		if (!skill.includes(target)) failures.push(`skills/pi-multiagent/SKILL.md: missing linked reference ${target}`);
 	}
+}
+
+function checkPackageGalleryMetadata(): void {
+	const parsed: unknown = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8"));
+	if (!isObject(parsed) || !isObject(parsed.pi)) {
+		failures.push("package.json: missing pi manifest object");
+		return;
+	}
+	if (parsed.pi.image !== "https://unpkg.com/pi-multiagent/assets/pi-multiagent-gallery.webp") {
+		failures.push("package.json: pi.image must point at the packaged gallery preview asset");
+	}
+	const assetPath = join(packageRoot, "assets", "pi-multiagent-gallery.webp");
+	if (!existsSync(assetPath)) {
+		failures.push("assets/pi-multiagent-gallery.webp: package-gallery image is missing");
+		return;
+	}
+	const webp = readFileSync(assetPath);
+	const isWebp = webp.length >= 30 && webp.subarray(0, 4).toString("ascii") === "RIFF" && webp.subarray(8, 12).toString("ascii") === "WEBP";
+	if (!isWebp) {
+		failures.push("assets/pi-multiagent-gallery.webp: package-gallery image must be WebP");
+		return;
+	}
+	const chunk = webp.subarray(12, 16).toString("ascii");
+	let width = 0;
+	let height = 0;
+	if (chunk === "VP8 ") {
+		width = webp.readUInt16LE(26) & 0x3fff;
+		height = webp.readUInt16LE(28) & 0x3fff;
+	} else if (chunk === "VP8X") {
+		width = webp.readUIntLE(24, 3) + 1;
+		height = webp.readUIntLE(27, 3) + 1;
+	} else if (chunk === "VP8L") {
+		const b1 = webp[21];
+		const b2 = webp[22];
+		const b3 = webp[23];
+		const b4 = webp[24];
+		width = 1 + (((b2 & 0x3f) << 8) | b1);
+		height = 1 + (((b4 & 0x0f) << 10) | (b3 << 2) | ((b2 & 0xc0) >> 6));
+	}
+	if (width !== 1600 || height !== 1000) failures.push(`assets/pi-multiagent-gallery.webp: expected 1600x1000 preview, got ${width}x${height}`);
 }
 
 function checkGraduatedQuickstartAndCookbook(): void {
