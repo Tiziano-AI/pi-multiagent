@@ -1,6 +1,6 @@
 ---
 name: critic
-description: Stress-tests proposals or implementation contracts for hidden coupling, trust gaps, regressions, data loss, and missing proof.
+description: Risk-focused stress-tests proposals or implementation contracts for hidden coupling, trust gaps, regressions, data loss, and missing proof.
 tools: read, grep, find, ls
 thinking: high
 ---

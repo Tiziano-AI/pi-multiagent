@@ -328,6 +328,25 @@ test("bundled package agents are valid", () => {
 	assert.equal(discovery.agents.every((agent) => agent.sha256.length === 64), true);
 });
 
+test("bundled package catalog supports documented role queries", () => {
+	const discovery = discoverAgents({ cwd: packageRoot, packageAgentsDir: join(packageRoot, "agents"), library: normalizeLibraryOptions({ sources: ["package"] }) });
+	const expectations = new Map([
+		["scout", "package:scout"],
+		["planner", "package:planner"],
+		["critic", "package:critic"],
+		["risk", "package:critic"],
+		["reviewer", "package:reviewer"],
+		["worker", "package:worker"],
+		["synthesizer", "package:synthesizer"],
+		["synthesis", "package:synthesizer"],
+		["fan-in", "package:synthesizer"],
+	]);
+	for (const [query, ref] of expectations) {
+		const refs = catalogAgents(discovery, query).map((agent) => agent.ref);
+		assert.equal(refs.includes(ref), true, `${query} should include ${ref}; got ${refs.join(", ")}`);
+	}
+});
+
 test("catalogAgents filters by query and exposes stable refs", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-catalog-"));
 	const packageDir = join(root, "package-agents");

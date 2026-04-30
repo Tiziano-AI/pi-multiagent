@@ -5,7 +5,7 @@ These are copyable graph patterns for `agent_team`. They are examples, not a run
 ## Universal choreography rules
 
 - Catalog first: use `action: "catalog"` before choosing reusable package, user, or project refs.
-- Use one focused catalog query such as `review`, `plan`, or `synthesis`; query matching is substring-based, not multi-keyword search.
+- Use one focused catalog query that matches catalog metadata, not full prompt text. Role names/refs are safest: `scout`, `planner`, `critic`, `reviewer`, `worker`, `synthesizer`; `risk` and `synthesis` are also package-agent metadata keywords.
 - Parallelize read-only discovery, audit, and review lanes when their evidence ownership is disjoint.
 - Use `needs` to serialize write-capable or side-effectful steps unless file/effect ownership is explicitly disjoint.
 - Use a normal `package:synthesizer` step for non-terminal fan-in when later steps need a merged implementation contract.

@@ -12,7 +12,7 @@ Use `agent_team` as a bounded same-session delegation graph. Choose the right su
 
 ## Fast path
 
-1. Call `agent_team` with `action: "catalog"` for authoritative reusable-agent metadata whenever package, user, or project roles might fit. Search with one focused substring such as `evidence`, `plan`, `risk`, `review`, `implementation`, or `synthesis`; catalog query is not multi-keyword search.
+1. Call `agent_team` with `action: "catalog"` for authoritative reusable-agent metadata whenever package, user, or project roles might fit. Search with one focused substring over catalog metadata, not prompt bodies. Role names/refs are safest: `scout`, `planner`, `critic`, `reviewer`, `worker`, `synthesizer`; `risk` and `synthesis` are also package-agent metadata keywords.
 2. Prefer inline agents for one-off task-specific roles. Use source-qualified library refs such as `package:reviewer` for recurring roles after confirming them in catalog output.
 3. Keep project agents denied unless the repository is trusted and approval is explicit.
 4. Give every step a concrete `task`; use `outputContract` for required format, paths, severity, or validation evidence.

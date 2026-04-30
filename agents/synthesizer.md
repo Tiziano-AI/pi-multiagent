@@ -1,6 +1,6 @@
 ---
 name: synthesizer
-description: Merges independent outputs into an evidence-weighted answer, implementation contract, or decision while preserving conflicts.
+description: Synthesizes and merges independent outputs into an evidence-weighted synthesis/fan-in answer, implementation contract, or decision while preserving conflicts.
 tools: read, grep, find, ls
 thinking: high
 ---

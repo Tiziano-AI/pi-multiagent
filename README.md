@@ -197,6 +197,8 @@ Library discovery is source-qualified and path-based:
 
 Project agents are denied by default because they are repository-controlled prompts. `projectAgents: "confirm"` asks through Pi UI and fails closed without UI; `projectAgents: "allow"` should be used only for trusted repositories.
 
+`library.query` is a case-insensitive substring filter over catalog metadata: name, source-qualified ref, description, source, tools, model, and file path. It does not search the full agent prompt body. Role names or refs are the safest queries.
+
 ## Graph cookbook
 
 The cookbook is a set of schema-checked starting graphs, not a runtime template API. Copy a JSON file, run catalog to verify any library refs in your environment, then replace the objective, tasks, and output contracts for your work. When the resulting graph is easier to review as a file than as inline tool arguments, invoke it with `graphFile`.
@@ -204,7 +206,7 @@ The cookbook is a set of schema-checked starting graphs, not a runtime template 
 Use these graph rules for every template:
 
 - call catalog before choosing reusable package, user, or project agents;
-- use a focused catalog query such as `review`, `plan`, or `synthesis`; query matching is substring-based, not multi-keyword search;
+- use one focused catalog query that matches catalog metadata, not full prompt text; role names/refs are safest: `scout`, `planner`, `critic`, `reviewer`, `worker`, `synthesizer`;
 - keep read-only discovery and review lanes parallel;
 - use a normal `package:synthesizer` step for non-terminal fan-in when later steps need the merged contract;
 - reserve top-level `synthesis` for final fan-in;

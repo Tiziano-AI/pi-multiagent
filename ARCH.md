@@ -77,7 +77,7 @@ This prevents path traversal, blank headings, and prompt temp-file ambiguity. `a
 
 ## Catalog action
 
-`action: "catalog"` is the model-facing discovery/search surface. It returns reusable library agents from selected sources, filtered by `library.query` when provided.
+`action: "catalog"` is the model-facing discovery/search surface. It returns reusable library agents from selected sources, filtered by `library.query` when provided. Query matching is case-insensitive substring filtering over catalog metadata: name, source-qualified ref, description, source, tools, model, and file path. It does not search the full agent prompt body, so role names or refs are the safest queries.
 
 Default library behavior:
 
