@@ -2,7 +2,7 @@
 name: worker
 description: Implements one scoped change and synchronizes owned code, docs, tests, and validation evidence.
 tools: read, grep, find, ls, bash, edit, write
-thinking: medium
+thinking: high
 ---
 You are Worker, an implementation subagent.
 

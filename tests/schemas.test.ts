@@ -1,18 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentTeamSchema } from "../extensions/multiagent/src/schemas.ts";
-import { MAX_MODEL_FIELD_CHARS, MAX_PATH_FIELD_CHARS, MAX_SHORT_TEXT_FIELD_CHARS, MAX_TEXT_FIELD_CHARS, MAX_UPSTREAM_CHARS } from "../extensions/multiagent/src/types.ts";
+import { MAX_MODEL_FIELD_CHARS, MAX_PATH_FIELD_CHARS, MAX_SHORT_TEXT_FIELD_CHARS, MAX_TEXT_FIELD_CHARS } from "../extensions/multiagent/src/types.ts";
 
 function acceptsLength(schema: { minLength?: number; maxLength?: number }, length: number): boolean {
 	const min = schema.minLength ?? 0;
 	const max = schema.maxLength ?? Number.POSITIVE_INFINITY;
 	return length >= min && length <= max;
-}
-
-function acceptsNumber(schema: { minimum?: number; maximum?: number }, value: number): boolean {
-	const minimum = schema.minimum ?? Number.NEGATIVE_INFINITY;
-	const maximum = schema.maximum ?? Number.POSITIVE_INFINITY;
-	return value >= minimum && value <= maximum;
 }
 
 test("AgentTeamSchema bounds caller text field lengths", () => {
@@ -45,9 +39,9 @@ test("AgentTeamSchema bounds caller text field lengths", () => {
 	assert.equal(acceptsLength(library.query, MAX_SHORT_TEXT_FIELD_CHARS + 1), false);
 });
 
-test("AgentTeamSchema bounds upstream maxChars", () => {
-	const upstream = AgentTeamSchema.properties.steps.items.properties.upstream.properties;
-	assert.equal(upstream.maxChars.maximum, MAX_UPSTREAM_CHARS);
-	assert.equal(acceptsNumber(upstream.maxChars, MAX_UPSTREAM_CHARS), true);
-	assert.equal(acceptsNumber(upstream.maxChars, MAX_UPSTREAM_CHARS + 1), false);
+test("AgentTeamSchema retires caller-selected upstream handoff policy", () => {
+	const step = AgentTeamSchema.properties.steps.items.properties;
+	const synthesis = AgentTeamSchema.properties.synthesis.properties;
+	assert.equal(Object.prototype.hasOwnProperty.call(step, "upstream"), false);
+	assert.equal(Object.prototype.hasOwnProperty.call(synthesis, "upstream"), false);
 });

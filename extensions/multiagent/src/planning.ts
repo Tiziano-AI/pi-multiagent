@@ -9,11 +9,10 @@ import type {
 	LibrarySource,
 	ResolvedAgent,
 	TeamStepSpec,
-	UpstreamPolicy,
 } from "./types.ts";
-import { DEFAULT_UPSTREAM_CHARS, LIBRARY_SOURCE_VALUES, MAX_UPSTREAM_CHARS, PUBLIC_ID_PATTERN, SOURCE_QUALIFIED_LIBRARY_REF_PATTERN } from "./types.ts";
+import { LIBRARY_SOURCE_VALUES, PUBLIC_ID_PATTERN, SOURCE_QUALIFIED_LIBRARY_REF_PATTERN } from "./types.ts";
 import { appendDiagnostic, createRunResult, noteFailureCause, setFailureProvenance } from "./json-events.ts";
-import { hasReadTool, validateToolNames } from "./tool-policy.ts";
+import { validateToolNames } from "./tool-policy.ts";
 
 const DEFAULT_SYNTHESIS_AGENT_ID = "agent-team-synthesizer";
 const DEFAULT_SYNTHESIS_STEP_ID = "synthesis";
@@ -245,10 +244,6 @@ function resolveSteps(input: AgentTeamInput, agents: ResolvedAgent[], diagnostic
 		if (input.synthesis.agent !== undefined) validateAgentReference(input.synthesis.agent, `synthesis agent ${input.synthesis.agent}`, diagnostics, "/synthesis/agent");
 		for (const [index, sourceStep] of (input.synthesis.from ?? []).entries()) validatePublicId(sourceStep, `synthesis source ${sourceStep}`, diagnostics, `/synthesis/from/${index}`);
 		const from = dedupeRefs(input.synthesis.from ?? steps.map((step) => step.id));
-		const upstream = normalizeUpstreamPolicy(input.synthesis.upstream);
-		if (input.synthesis.agent === undefined && upstream.mode === "file-ref") {
-			diagnostics.push(makeDiagnostic("synthesis-file-ref-no-tools", "Default synthesis has no tools for file-ref paths; set synthesis.agent to an agent with the exact read tool or use preview/full.", "error", "/synthesis/upstream/mode"));
-		}
 		steps.push({
 			id: synthesisId,
 			agent: input.synthesis.agent ?? DEFAULT_SYNTHESIS_AGENT_ID,
@@ -256,7 +251,6 @@ function resolveSteps(input: AgentTeamInput, agents: ResolvedAgent[], diagnostic
 			needs: from,
 			cwd: undefined,
 			outputContract: input.synthesis.outputContract,
-			upstream,
 			allowFailedDependencies: input.synthesis.allowPartial ?? false,
 			synthesis: true,
 		});
@@ -283,7 +277,6 @@ function readSteps(input: AgentTeamInput["steps"], diagnostics: AgentDiagnostic[
 			needs: dedupeRefs(step.needs ?? []),
 			cwd: step.cwd,
 			outputContract: step.outputContract,
-			upstream: normalizeUpstreamPolicy(step.upstream),
 			allowFailedDependencies: false,
 			synthesis: false,
 		};
@@ -301,9 +294,6 @@ function validateSteps(steps: TeamStepSpec[], agents: ResolvedAgent[], diagnosti
 		stepIds.add(step.id);
 		const agent = agentById.get(step.agent);
 		if (!agent) diagnostics.push(makeDiagnostic("step-agent-unknown", `Step ${step.id} references unknown agent ${step.agent}. Define it in agents[], use a source-qualified library ref, run action:"catalog", or adjust library.sources/projectAgents.`, "error", `${stepPath}/agent`));
-		else if (step.needs.length > 0 && step.upstream.mode === "file-ref" && !(step.synthesis && agent.ref === "inline:agent-team-synthesizer") && !hasReadTool(agent.tools)) {
-			diagnostics.push(makeDiagnostic("file-ref-agent-no-read-tool", `Step ${step.id} receives file-ref upstream but agent ${step.agent} lacks the exact read tool; add read or use preview/full.`, "error", `${stepPath}/upstream/mode`));
-		}
 		for (const need of step.needs) {
 			if (need === step.id) diagnostics.push(makeDiagnostic("step-self-dependency", `Step ${step.id} depends on itself.`, "error", `${stepPath}/needs`));
 			if (!step.synthesis && synthesisIds.has(need)) diagnostics.push(makeDiagnostic("synthesis-must-be-terminal", `Step ${step.id} depends on synthesis step ${need}; synthesis is terminal fan-in and cannot be used as an intermediate dependency.`, "error", `${stepPath}/needs`));
@@ -384,11 +374,6 @@ function validateAgentReference(value: string, label: string, diagnostics: Agent
 	if (PUBLIC_ID_REGEX.test(value) || SOURCE_QUALIFIED_LIBRARY_REF_REGEX.test(value)) return true;
 	diagnostics.push(makeDiagnostic("agent-ref-invalid", `${label} must be an invocation-local id or source-qualified library ref like package:reviewer.`, "error", path));
 	return false;
-}
-
-function normalizeUpstreamPolicy(input: { mode?: "preview" | "full" | "file-ref"; maxChars?: number } | undefined): UpstreamPolicy {
-	const maxChars = Math.max(1, Math.min(Math.floor(input?.maxChars ?? DEFAULT_UPSTREAM_CHARS), MAX_UPSTREAM_CHARS));
-	return { mode: input?.mode ?? "preview", maxChars };
 }
 
 function parseLibraryRef(value: string): LibraryRef | undefined {

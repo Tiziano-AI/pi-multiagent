@@ -82,6 +82,23 @@ test("discoverAgents reports duplicate source refs only", async () => {
 	await rm(root, { recursive: true, force: true });
 });
 
+test("global Pi directory is not treated as project agents or project-scoped user agents", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-global-pi-"));
+	const globalPiDir = join(root, ".pi");
+	const userDir = join(globalPiDir, "agent", "agents");
+	const packageDir = join(root, "package-agents");
+	const project = join(root, "Code", "repo");
+	await mkdir(join(project, ".git"), { recursive: true });
+	await makeAgent(userDir, "user.md", "---\nname: user\ndescription: user agent\n---\nUser prompt");
+	await makeAgent(join(globalPiDir, "agents"), "global-project.md", "---\nname: global-project\ndescription: not project\n---\nGlobal prompt");
+	const projectAgentsDir = findNearestProjectAgentsDir(project, globalPiDir);
+	const discovery = discoverAgents({ cwd: project, packageAgentsDir: packageDir, userAgentsDir: userDir, globalPiDir, library: normalizeLibraryOptions({ sources: ["user", "project"], projectAgents: "allow" }) });
+	assert.equal(projectAgentsDir, undefined);
+	assert.deepEqual(discovery.agents.map((agent) => agent.ref), ["user:user"]);
+	assert.equal(discovery.diagnostics.some((item) => item.code === "user-agents-dir-project-scoped"), false);
+	await rm(root, { recursive: true, force: true });
+});
+
 test("project source is denied by default", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-project-deny-"));
 	const packageDir = join(root, "package-agents");

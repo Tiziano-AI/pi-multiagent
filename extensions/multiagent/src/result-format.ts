@@ -1,7 +1,7 @@
 /** Model-facing formatting helpers for agent_team results and usage. */
 
-import type { AgentRunResult, AgentTeamDetails, FailureProvenance, UpstreamPolicy, UsageStats } from "./types.ts";
-import { createEmptyUsage } from "./types.ts";
+import type { AgentRunResult, AgentTeamDetails, FailureProvenance, UsageStats } from "./types.ts";
+import { INLINE_HANDOFF_CHARS, createEmptyUsage } from "./types.ts";
 
 export const DEFAULT_MAX_LINES = 2000;
 export const DEFAULT_MAX_BYTES = 50 * 1024;
@@ -65,15 +65,15 @@ export function formatRunForModel(details: AgentTeamDetails): string {
 		.join("\n");
 }
 
-export function formatStepOutputsForPrompt(results: AgentRunResult[], ids?: string[], policy?: UpstreamPolicy): string {
+export function formatStepOutputsForPrompt(results: AgentRunResult[], ids?: string[]): string {
 	const allowed = ids ? new Set(ids) : undefined;
 	return results
 		.filter((result) => !allowed || allowed.has(result.id))
 		.map((result) => {
-			const fileRef = policy?.mode === "file-ref" ? `File reference: ${fileReferenceText(result)}` : "";
-			const output = policy?.mode === "file-ref" ? "" : formatOutputForPolicy(result, policy);
+			const oversized = isOversizedForInlineHandoff(result);
+			const fileRef = oversized ? `File reference: ${fileReferenceText(result)}` : "";
+			const output = oversized ? "" : capturedOutputText(result, true);
 			const reason = result.status === "succeeded" ? "" : failureReason(result);
-			const fullPath = !policy && (result.outputTruncated || result.outputCaptureTruncated) && result.fullOutputPath ? `\n\n[Full step output saved to JSON-string file path: ${JSON.stringify(result.fullOutputPath)}]` : "";
 			const metadata = [
 				`### ${modelText(result.id)}: ${modelText(result.agent)} [${modelText(result.status)}]`,
 				`Agent source: ${modelText(result.agentSource)}`,
@@ -85,7 +85,7 @@ export function formatStepOutputsForPrompt(results: AgentRunResult[], ids?: stri
 				fileRef,
 				visibleStepDiagnostic(result),
 			].filter((line) => line.length > 0);
-			return [...metadata, "", outputBlock(result.id, output), policy?.mode === "full" ? "" : fullPath].filter((line) => line.length > 0).join("\n");
+			return [...metadata, "", outputBlock(result.id, output)].filter((line) => line.length > 0).join("\n");
 		})
 		.join("\n\n");
 }
@@ -111,16 +111,13 @@ function escapeOutputBlockMarkers(output: string): string {
 	return output.replace(/(^|\r\n|\n|\r|\u2028|\u2029)(\[agent_team output (?:begin|end):)/g, "$1\\$2");
 }
 
-function formatOutputForPolicy(result: AgentRunResult, policy: UpstreamPolicy | undefined): string {
-	if (!policy) return capturedOutputText(result);
-	const raw = capturedOutputText(result, policy.mode === "full");
-	if (raw.length <= policy.maxChars) return raw;
-	return `${raw.slice(0, policy.maxChars)}\n[truncated for upstream handoff at ${policy.maxChars} chars]`;
+function isOversizedForInlineHandoff(result: AgentRunResult): boolean {
+	return result.outputFull.length > INLINE_HANDOFF_CHARS;
 }
 
 function fileReferenceText(result: AgentRunResult): string {
-	if (result.fullOutputPath) return `output omitted by file-ref upstream policy; read this exact JSON-string file path with the read tool: ${JSON.stringify(result.fullOutputPath)}`;
-	return "output omitted by file-ref upstream policy; no full-output file available; output retained in structured details";
+	if (result.fullOutputPath) return `output exceeded ${INLINE_HANDOFF_CHARS} chars; read this exact JSON-string file path: ${JSON.stringify(result.fullOutputPath)}`;
+	return `output exceeded ${INLINE_HANDOFF_CHARS} chars but no full-output file is available; output retained in structured details`;
 }
 
 export function formatUsageStats(usage: UsageStats, model: string | undefined): string {

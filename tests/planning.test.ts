@@ -276,66 +276,6 @@ test("resolveRunPlan rejects normal steps depending on synthesis", () => {
 	assert.equal(diagnostic?.message.includes("cannot be used as an intermediate dependency"), true);
 });
 
-test("resolveRunPlan rejects default no-tool synthesis with file refs", () => {
-	const plan = resolveRunPlan(
-		{
-			action: "run",
-			objective: "summarize file refs",
-			agents: [{ id: "worker", kind: "inline", system: "x" }],
-			steps: [{ id: "one", agent: "worker", task: "Produce output." }],
-			synthesis: { task: "Summarize.", upstream: { mode: "file-ref" } },
-		},
-		[],
-		noDiagnostics,
-	);
-	const diagnostic = plan.diagnostics.find((item) => item.code === "synthesis-file-ref-no-tools" && item.path === "/synthesis/upstream/mode");
-	assert.equal(diagnostic?.severity, "error");
-	assert.equal(diagnostic?.message.includes("agent with the exact read tool"), true);
-});
-
-test("resolveRunPlan rejects explicit library synthesizer without read for file refs", () => {
-	const librarySynthesizer: AgentConfig = {
-		...reviewer,
-		name: "agent-team-synthesizer",
-		ref: "package:agent-team-synthesizer",
-		description: "No-read package synthesizer",
-		tools: [],
-		systemPrompt: "Summarize without tools.",
-	};
-	const plan = resolveRunPlan(
-		{
-			action: "run",
-			objective: "summarize file refs",
-			agents: [{ id: "worker", kind: "inline", system: "x" }],
-			steps: [{ id: "one", agent: "worker", task: "Produce output." }],
-			synthesis: { agent: "package:agent-team-synthesizer", task: "Summarize.", upstream: { mode: "file-ref" } },
-		},
-		[librarySynthesizer],
-		noDiagnostics,
-	);
-	const diagnostic = plan.diagnostics.find((item) => item.code === "file-ref-agent-no-read-tool" && item.path === "/synthesis/upstream/mode");
-	assert.equal(diagnostic?.severity, "error");
-});
-
-test("resolveRunPlan rejects file-ref receivers without read tool", () => {
-	const plan = resolveRunPlan(
-		{
-			action: "run",
-			objective: "file ref requires read",
-			agents: [{ id: "worker", kind: "inline", system: "x", tools: [] }],
-			steps: [
-				{ id: "one", agent: "worker", task: "produce" },
-				{ id: "two", agent: "worker", task: "consume", needs: ["one"], upstream: { mode: "file-ref" } },
-			],
-		},
-		[],
-		noDiagnostics,
-	);
-	const diagnostic = plan.diagnostics.find((item) => item.code === "file-ref-agent-no-read-tool" && item.path === "/steps/1/upstream/mode");
-	assert.equal(diagnostic?.severity, "error");
-	assert.equal(diagnostic?.message.includes("lacks the exact read tool"), true);
-});
-
 test("resolveRunPlan reserves the public default synthesizer id", () => {
 	const plan = resolveRunPlan(
 		{

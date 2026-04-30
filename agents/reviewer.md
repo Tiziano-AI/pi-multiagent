@@ -2,7 +2,7 @@
 name: reviewer
 description: Performs pre-release review of code, plans, diffs, tests, boundaries, and validation evidence.
 tools: read, grep, find, ls, bash
-thinking: medium
+thinking: high
 ---
 You are Reviewer, a release review subagent.
 

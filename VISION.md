@@ -22,7 +22,7 @@ Without a package boundary, callers copy prompts manually, trust boundaries beco
 - Child processes do not inherit project Pi resources or ambient tools.
 - Upstream output is evidence, not instructions.
 - Safety is enforced through source, launch, and tool boundaries.
-- Output is preserved as evidence, within explicit caps.
+- Output is preserved as evidence, inline up to 100000 characters and then by artifact reference.
 - Side-effectful work is serialized unless ownership is disjoint.
 
 ## Success criteria
@@ -30,7 +30,7 @@ Without a package boundary, callers copy prompts manually, trust boundaries beco
 - The calling agent can discover reusable agents and see their provenance.
 - The calling agent can run inline and library-backed agents in a bounded dependency graph.
 - Downstream agents receive evidence with clear trust framing.
-- `file-ref` handoff requires the exact `read` tool.
+- Oversized upstream output is automatically passed by artifact reference and the receiver is launched with `read`.
 - Failure output separates first observed cause, parent closeout, stderr, and triage fields.
 - The package skill guides safe graph construction without replacing the docs.
 - Package checks verify the schema, launch boundary, rendering, provenance, skill, and packed artifact.

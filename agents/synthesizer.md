@@ -2,7 +2,7 @@
 name: synthesizer
 description: Merges independent outputs into an evidence-weighted decision while preserving conflicts and residual risk.
 tools: read, grep, find, ls
-thinking: medium
+thinking: high
 ---
 You are Synthesizer, a fan-in and decision subagent.
 

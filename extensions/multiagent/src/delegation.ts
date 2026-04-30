@@ -23,7 +23,8 @@ import type {
 } from "./types.ts";
 import { MAX_CONCURRENCY } from "./types.ts";
 import { appendDiagnostic, createRunResult, finishRunStatus, isFailedResult, isTerminalResult, noteFailureCause } from "./json-events.ts";
-import { isReadableFile, persistFullStepOutput, persistFullStepOutputs, writeTempMarkdown } from "./output-files.ts";
+import { prepareAutomaticHandoff } from "./handoff.ts";
+import { persistFullStepOutputs, writeTempMarkdown } from "./output-files.ts";
 import { blockStep, createPlaceholder, makeDiagnostic, resolveRunPlan, validatePreflightShape } from "./planning.ts";
 import { formatDetailsForModel, formatSize, formatStepOutputsForPrompt, modelText, truncateHead } from "./result-format.ts";
 import { snapshotAgent, snapshotCatalogAgent, snapshotResult } from "./snapshot.ts";
@@ -49,7 +50,6 @@ interface RunOneOptions {
 	signal: AbortSignal | undefined;
 	spawnProcess: SpawnProcess;
 	onPartial: ((result: AgentRunResult) => void) | undefined;
-	persistOutputForFileRef: boolean;
 }
 
 export async function runAgentTeam(
@@ -135,23 +135,22 @@ async function runScheduledStep(
 	const agent = agents.find((candidate) => candidate.id === step.agent);
 	if (!agent) return;
 	const upstream = step.needs.map((id) => resultById.get(id)).filter((result): result is AgentRunResult => result !== undefined);
-	const missingFileRef = missingFileRefArtifact(step, upstream);
-	if (missingFileRef) {
-		resultById.set(step.id, blockStep(step, agents, missingFileRef, "upstream file-ref artifact unavailable"));
+	const handoff = await prepareAutomaticHandoff(step, agent, upstream, diagnostics);
+	if (handoff.blockReason) {
+		resultById.set(step.id, blockStep(step, agents, handoff.blockReason, "upstream handoff artifact unavailable"));
 		emitUpdate(input, options, agents, orderedResults(steps, resultById), diagnostics);
 		return;
 	}
 	const result = await runOneAgent({
 		defaultCwd: options.cwd,
 		objective,
-		agent,
+		agent: handoff.launchAgent,
 		step,
 		upstream,
 		defaults: options.defaults,
 		limits,
 		signal: options.signal,
 		spawnProcess,
-		persistOutputForFileRef: needsFileRefArtifact(step.id, steps),
 		onPartial: (partial) => {
 			resultById.set(step.id, partial);
 			emitUpdate(input, options, agents, orderedResults(steps, resultById), diagnostics);
@@ -216,7 +215,6 @@ async function runOneAgent(options: RunOneOptions): Promise<AgentRunResult> {
 				},
 			});
 			finishRunStatus(result, outcome.exitCode, { aborted: outcome.aborted, timedOut: outcome.timedOut, exitSignal: outcome.exitSignal, failureTerminated: outcome.failureTerminated, launched: outcome.launched, closeout: outcome.closeout });
-			if (options.persistOutputForFileRef) await persistFullStepOutput(result);
 		}
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
@@ -363,7 +361,7 @@ function buildDelegatedTask(objective: string, step: TeamStepSpec, agent: Resolv
 		`Task:\n${step.task}`,
 		step.outputContract ? `Step output contract:\n${step.outputContract}` : "",
 		agent.outputContract ? `Agent output contract:\n${agent.outputContract}` : "",
-		upstream.length > 0 ? `${TRUST_GUARD}\n\nUpstream outputs:\n\n${formatStepOutputsForPrompt(upstream, undefined, step.upstream)}\n\n${UPSTREAM_END_GUARD}` : "",
+		upstream.length > 0 ? `${TRUST_GUARD}\n\nUpstream outputs:\n\n${formatStepOutputsForPrompt(upstream)}\n\n${UPSTREAM_END_GUARD}` : "",
 	]
 		.filter((section) => section.length > 0)
 		.join("\n\n");
@@ -387,21 +385,6 @@ function isExistingDirectory(path: string): boolean {
 	} catch {
 		return false;
 	}
-}
-
-function needsFileRefArtifact(stepId: string, steps: TeamStepSpec[]): boolean {
-	return steps.some((step) => step.needs.includes(stepId) && step.upstream.mode === "file-ref");
-}
-
-function missingFileRefArtifact(step: TeamStepSpec, upstream: AgentRunResult[]): string | undefined {
-	if (step.upstream.mode !== "file-ref") return undefined;
-	const missing = upstream.find((result) => result.outputFull.length > 0 && (!result.fullOutputPath || !isReadableFile(result.fullOutputPath)));
-	if (!missing) return undefined;
-	if (missing.fullOutputPath) {
-		appendDiagnostic(missing, `Discarded stale fullOutputPath for ${missing.id} because the artifact could not be read.`);
-		missing.fullOutputPath = undefined;
-	}
-	return `Blocked because upstream file-ref artifact is unavailable for ${missing.id}; full output could not be persisted or read.`;
 }
 
 function findProjectSettingsFile(cwd: string): string | undefined {

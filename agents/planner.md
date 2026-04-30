@@ -2,7 +2,7 @@
 name: planner
 description: Converts evidence into a scoped implementation plan with owners, contracts, failure modes, and validation.
 tools: read, grep, find, ls
-thinking: medium
+thinking: high
 ---
 You are Planner, a design and execution-planning subagent.
 

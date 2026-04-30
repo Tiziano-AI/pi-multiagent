@@ -5,7 +5,6 @@ import { type Static, Type } from "typebox";
 import {
 	AGENT_REFERENCE_PATTERN,
 	AGENT_TEAM_ACTION_VALUES,
-	DEFAULT_UPSTREAM_CHARS,
 	INVOCATION_AGENT_KIND_VALUES,
 	LIBRARY_SOURCE_VALUES,
 	MAX_CONCURRENCY,
@@ -16,13 +15,11 @@ import {
 	MAX_SHORT_TEXT_FIELD_CHARS,
 	MAX_STEPS,
 	MAX_TEXT_FIELD_CHARS,
-	MAX_UPSTREAM_CHARS,
 	PROJECT_AGENTS_POLICY_VALUES,
 	PUBLIC_ID_PATTERN,
 	SOURCE_QUALIFIED_LIBRARY_REF_PATTERN,
 	THINKING_LEVEL_VALUES,
 	TOOL_NAME_PATTERN,
-	UPSTREAM_MODE_VALUES,
 } from "./types.ts";
 
 const StrictObjectOptions = { additionalProperties: false };
@@ -47,7 +44,7 @@ const LibrarySchema = Type.Object(
 	{
 		sources: Type.Optional(
 			Type.Array(StringEnum(LIBRARY_SOURCE_VALUES), {
-				description: 'Reusable agent sources. Default ["package", "user"]. Project agents require projectAgents. Run steps use source-qualified refs such as "package:reviewer".',
+				description: 'Reusable agent sources. Default ["package", "user"]. package=packaged agents/*.md; user=${PI_CODING_AGENT_DIR}/agents or ~/.pi/agent/agents; project=nearest project .pi/agents and requires projectAgents. Run steps use source-qualified refs such as "package:reviewer".',
 				minItems: 1,
 				maxItems: 3,
 			}),
@@ -55,7 +52,7 @@ const LibrarySchema = Type.Object(
 		query: Type.Optional(Type.String({ description: 'Catalog-only search query. Run calls reject query; use source-qualified refs instead.', minLength: 1, maxLength: MAX_SHORT_TEXT_FIELD_CHARS })),
 		projectAgents: Type.Optional(
 			StringEnum(PROJECT_AGENTS_POLICY_VALUES, {
-				description: 'Project-agent policy. Default "deny". Use "allow" only for trusted repositories.',
+				description: 'Project-agent policy for nearest project .pi/agents. Default "deny". Use "allow" only for trusted repositories; "confirm" fails closed without UI.',
 				default: "deny",
 			}),
 		),
@@ -90,21 +87,6 @@ const AgentSpecSchema = Type.Object(
 	StrictObjectOptions,
 );
 
-const UpstreamSchema = Type.Object(
-	{
-		mode: Type.Optional(
-			StringEnum(UPSTREAM_MODE_VALUES, {
-				description: 'How upstream outputs are handed off. Default "preview" copies a bounded preview. "full" copies bounded full text. "file-ref" sends file metadata; the receiver must have the exact read tool.',
-				default: "preview",
-			}),
-		),
-		maxChars: Type.Optional(
-			Type.Number({ description: `Maximum characters included per upstream output. Default ${DEFAULT_UPSTREAM_CHARS}; hard max ${MAX_UPSTREAM_CHARS}.`, minimum: 1, maximum: MAX_UPSTREAM_CHARS, multipleOf: 1 }),
-		),
-	},
-	StrictObjectOptions,
-);
-
 const StepSchema = Type.Object(
 	{
 		id: publicId("Unique step id. Dependency outputs are addressed by this id. Lowercase letters, digits, and hyphens only."),
@@ -118,7 +100,6 @@ const StepSchema = Type.Object(
 		),
 		cwd: Type.Optional(nonEmptyText("Existing working directory for this step.", MAX_PATH_FIELD_CHARS)),
 		outputContract: Type.Optional(nonEmptyText("Step-specific output contract.")),
-		upstream: Type.Optional(UpstreamSchema),
 	},
 	StrictObjectOptions,
 );
@@ -126,7 +107,7 @@ const StepSchema = Type.Object(
 const SynthesisSchema = Type.Object(
 	{
 		id: Type.Optional(publicId('Synthetic step id. Default "synthesis".')),
-		agent: Type.Optional(agentReference("Invocation-local agent id or source-qualified library ref for synthesis. If omitted, a no-tool agent-team-synthesizer is created. Set an agent with the exact read tool for file-ref synthesis.")),
+		agent: Type.Optional(agentReference("Invocation-local agent id or source-qualified library ref for synthesis. If omitted, a no-tool agent-team-synthesizer is created for inline upstream output. Oversized upstream output is passed as file refs and the receiver is launched with read.")),
 		from: Type.Optional(
 			Type.Array(publicId("Step id to synthesize."), {
 				description: "Step ids to synthesize. Default all non-synthesis steps.",
@@ -139,7 +120,6 @@ const SynthesisSchema = Type.Object(
 			Type.Boolean({ description: "If true, synthesize even when referenced steps fail. Default false.", default: false }),
 		),
 		outputContract: Type.Optional(nonEmptyText("Synthesis output contract.")),
-		upstream: Type.Optional(UpstreamSchema),
 	},
 	StrictObjectOptions,
 );

@@ -12,8 +12,6 @@ export type InvocationAgentKind = "inline" | "library";
 
 export type ThinkingLevel = "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
-export type UpstreamMode = "preview" | "full" | "file-ref";
-
 export type AgentStatus = "pending" | "running" | "succeeded" | "failed" | "aborted" | "timed_out" | "blocked";
 
 export const DEFAULT_LIBRARY_SOURCES: LibrarySource[] = ["package", "user"];
@@ -23,8 +21,6 @@ export const PROJECT_AGENTS_POLICY_VALUES = ["deny", "confirm", "allow"] as cons
 export const AGENT_TEAM_ACTION_VALUES = ["catalog", "run"] as const;
 export const INVOCATION_AGENT_KIND_VALUES = ["inline", "library"] as const;
 export const THINKING_LEVEL_VALUES = ["inherit", "off", "minimal", "low", "medium", "high", "xhigh"] as const;
-export const UPSTREAM_MODE_VALUES = ["preview", "full", "file-ref"] as const;
-
 export const PUBLIC_ID_PATTERN = "^[a-z][a-z0-9-]{0,62}$";
 export const SOURCE_QUALIFIED_LIBRARY_REF_PATTERN = "^(package|user|project):[a-z][a-z0-9-]{0,62}$";
 export const AGENT_REFERENCE_PATTERN = `(${SOURCE_QUALIFIED_LIBRARY_REF_PATTERN})|${PUBLIC_ID_PATTERN}`;
@@ -34,11 +30,10 @@ export const MAX_INVOCATION_AGENTS = 16;
 export const MAX_STEPS = 16;
 export const MAX_DEPENDENCIES_PER_STEP = 12;
 export const MAX_CONCURRENCY = 6;
-export const OUTPUT_PREVIEW_CHARS = 6000;
+export const INLINE_HANDOFF_CHARS = 100000;
+export const OUTPUT_INLINE_CHARS = INLINE_HANDOFF_CHARS;
 export const OUTPUT_CAPTURE_CHARS = 200000;
 export const STDERR_PREVIEW_CHARS = 6000;
-export const DEFAULT_UPSTREAM_CHARS = 6000;
-export const MAX_UPSTREAM_CHARS = 50000;
 export const MAX_TEXT_FIELD_CHARS = 50000;
 export const MAX_SHORT_TEXT_FIELD_CHARS = 1000;
 export const MAX_PATH_FIELD_CHARS = 4096;
@@ -112,11 +107,6 @@ export interface ResolvedAgent {
 	outputContract: string | undefined;
 }
 
-export interface UpstreamPolicy {
-	mode: UpstreamMode;
-	maxChars: number;
-}
-
 export interface TeamStepSpec {
 	id: string;
 	agent: string;
@@ -124,7 +114,6 @@ export interface TeamStepSpec {
 	needs: string[];
 	cwd: string | undefined;
 	outputContract: string | undefined;
-	upstream: UpstreamPolicy;
 	allowFailedDependencies: boolean;
 	synthesis: boolean;
 }

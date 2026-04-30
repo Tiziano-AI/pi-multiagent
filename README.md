@@ -124,7 +124,7 @@ A run can use:
 - inline agents created for one call
 - package, user, or trusted project library agents
 - dependency steps with `needs`
-- bounded upstream handoff
+- automatic upstream handoff
 - optional final synthesis
 - concurrency and timeout limits
 
@@ -154,36 +154,39 @@ Package agents:
 
 | Ref | Best use | Default tools | Thinking |
 | --- | --- | --- | --- |
-| `package:scout` | Reconnaissance: files, docs, tests, commands, runtime evidence. | `read`, `grep`, `find`, `ls`, `bash` | `low` |
-| `package:planner` | Evidence-backed implementation plan with owners, contracts, failure modes, and validation. | `read`, `grep`, `find`, `ls` | `medium` |
+| `package:scout` | Reconnaissance: files, docs, tests, commands, runtime evidence. | `read`, `grep`, `find`, `ls`, `bash` | `high` |
+| `package:planner` | Evidence-backed implementation plan with owners, contracts, failure modes, and validation. | `read`, `grep`, `find`, `ls` | `high` |
 | `package:critic` | Pre-implementation stress test for hidden coupling, trust gaps, regressions, data loss, and missing proof. | `read`, `grep`, `find`, `ls` | `high` |
-| `package:reviewer` | Pre-release review of code, plans, diffs, tests, boundaries, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash` | `medium` |
-| `package:worker` | One scoped implementation change with synchronized code, docs, tests, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | `medium` |
-| `package:synthesizer` | Evidence-weighted fan-in that preserves disagreement and residual risk. | `read`, `grep`, `find`, `ls` | `medium` |
+| `package:reviewer` | Pre-release review of code, plans, diffs, tests, boundaries, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash` | `high` |
+| `package:worker` | One scoped implementation change with synchronized code, docs, tests, and validation evidence. | `read`, `grep`, `find`, `ls`, `bash`, `edit`, `write` | `high` |
+| `package:synthesizer` | Evidence-weighted fan-in that preserves disagreement and residual risk. | `read`, `grep`, `find`, `ls` | `high` |
 
 Catalog output shows each source-qualified ref, declared tools, thinking level, optional model, description, file path, and SHA-256 prefix so the caller can choose and cite the prompt it used.
 
-Human-authored library agents live in:
+Library discovery is source-qualified and path-based:
 
-- package: `agents/*.md`
-- user: `~/.pi/agent/agents/*.md`
-- project: nearest `.pi/agents/*.md`
+| Source | Search path | Ref form | Default | Trust behavior |
+| --- | --- | --- | --- | --- |
+| `package` | This package's bundled `agents/*.md` in the installed package or source checkout. | `package:name` | enabled | Package-owned prompts shipped with `pi-multiagent`. |
+| `user` | `${PI_CODING_AGENT_DIR}/agents/*.md` when `PI_CODING_AGENT_DIR` is set; otherwise `~/.pi/agent/agents/*.md`. | `user:name` | enabled | Personal prompts. Denied if the directory resolves inside the current project root; symlinked user-agent files are denied. |
+| `project` | Nearest ancestor project `.pi/agents/*.md`; the global Pi config root `~/.pi` is not a project marker. | `project:name` | disabled | Repository-controlled prompts. Requires `library.sources` to include `project` and `projectAgents: "confirm"` or `"allow"`. |
 
-Project agents are denied by default because they are repository-controlled prompts. Use `projectAgents: "confirm"` or `"allow"` only for trusted repositories.
+`library.sources` selects which sources to discover. If omitted, `agent_team` discovers `package` and `user`. Duplicate names across sources coexist because refs include the source, for example `package:reviewer` and `user:reviewer`. Discovery order is package, user, project; callers should still use the exact source-qualified ref they intend.
+
+Project agents are denied by default because they are repository-controlled prompts. `projectAgents: "confirm"` asks through Pi UI and fails closed without UI; `projectAgents: "allow"` should be used only for trusted repositories.
 
 ## Handoff
 
 Upstream step output is appended to dependent tasks as untrusted evidence. It is not an instruction source. If a downstream agent must follow something, put it in that step's `task` or `outputContract`.
 
-Handoff modes:
+There are no caller-selected handoff modes. For each upstream step, `agent_team` automatically:
 
-| Mode | Behavior |
-| --- | --- |
-| `preview` | Default. Copies a bounded output preview. |
-| `full` | Copies bounded full output up to `maxChars`. |
-| `file-ref` | Sends file metadata instead of copied output. The receiver must have the exact `read` tool. |
+1. copies the full captured assistant output inline when it is at most 100000 characters;
+2. persists larger captured output to a mode `0600` temp file;
+3. passes the exact JSON-string file path to the receiver; and
+4. launches that receiver with `read` when it needs to dereference oversized upstream artifacts.
 
-The default no-tool synthesis agent cannot use `file-ref` because it cannot read files.
+The generated task keeps failure reason, cause, and provenance outside the copied or omitted output block.
 
 ## Execution boundary
 
@@ -203,12 +206,13 @@ Each child runs as a separate Pi process. The launch includes:
 
 The generated agent prompt is appended with `--append-system-prompt`; the delegated task is sent on stdin. The child does not inherit project extensions, context files, skills, prompt templates, themes, or ambient tools.
 
-Tool access is explicit:
+Tool access is explicit except for automatic oversized-output handoff reads:
 
-- omitted inline `tools`: no tools
-- `tools: []`: no tools
-- `tools: ["read", "grep"]`: exactly those tools
+- omitted inline `tools`: no tools unless an oversized upstream artifact must be read
+- `tools: []`: no tools unless an oversized upstream artifact must be read
+- `tools: ["read", "grep"]`: exactly those tools unless an oversized upstream artifact must be read
 - library tools: declared by the library prompt unless overridden
+- oversized upstream output adds `read` to the receiver launch so the file ref is usable
 
 This package allows `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write` for child tool allowlists. Add `bash` only when command execution is needed. Bash-enabled children are refused in cwd trees with `.pi/settings.json` because project settings can alter shell behavior.
 
@@ -241,8 +245,8 @@ Failures keep parent-observed facts separate from child-authored text. Failed an
 | Synthesis fan-in | 16 |
 | Concurrency | 1 to 6; default 6 |
 | Per-step timeout | 1 to 3600 seconds; optional; no default |
-| Upstream preview | default 6000 chars; max 50000 |
-| Per-step assistant output capture | 200000 chars |
+| Inline upstream handoff | 100000 chars per upstream step |
+| Per-step assistant output capture | 200000 chars; larger output fails closed |
 | Retained step events | 40 |
 | Per-event preview | 2000 chars |
 | JSON stdout line buffer | 1000000 chars |

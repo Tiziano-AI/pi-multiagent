@@ -4,7 +4,7 @@ import {
 	EVENT_PREVIEW_CHARS,
 	EVENT_PREVIEW_COUNT,
 	OUTPUT_CAPTURE_CHARS,
-	OUTPUT_PREVIEW_CHARS,
+	OUTPUT_INLINE_CHARS,
 	STDERR_PREVIEW_CHARS,
 	createEmptyUsage,
 	isRecord,
@@ -118,7 +118,7 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 		const update = isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : undefined;
 		if (update?.type === "text_delta" && typeof update.delta === "string") {
 			if (result.outputCaptureTruncated) return false;
-			setOutputPreview(result, `${result.outputFull}${update.delta}`);
+			setOutputCapture(result, `${result.outputFull}${update.delta}`);
 			return true;
 		}
 	}
@@ -135,7 +135,7 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 			result.sawAssistantMessageEnd = true;
 			if (!result.outputCaptureTruncated) {
 				const text = getText(message.content);
-				setOutputPreview(result, text);
+				setOutputCapture(result, text);
 			}
 			addUsage(result.usage, message.usage);
 			result.usage.turns += 1;
@@ -198,17 +198,17 @@ export function markMalformedStdout(result: AgentRunResult, line: string): void 
 	appendDiagnostic(result, `Non-JSON stdout: ${line}`);
 }
 
-export function setOutputPreview(result: AgentRunResult, text: string): void {
+export function setOutputCapture(result: AgentRunResult, text: string): void {
 	const captured = captureOutputText(text);
 	result.outputFull = captured.text;
 	result.outputCaptureTruncated = result.outputCaptureTruncated || captured.truncated;
 	if (captured.truncated) setErrorMessage(result, `Subagent output exceeded capture limit of ${OUTPUT_CAPTURE_CHARS} characters.`);
-	if (captured.text.length <= OUTPUT_PREVIEW_CHARS) {
+	if (captured.text.length <= OUTPUT_INLINE_CHARS) {
 		result.output = captured.text;
 		result.outputTruncated = captured.truncated;
 		return;
 	}
-	result.output = `${captured.text.slice(0, OUTPUT_PREVIEW_CHARS)}\n[Subagent output truncated for handoff.]`;
+	result.output = `${captured.text.slice(0, OUTPUT_INLINE_CHARS)}\n[Subagent output exceeded inline handoff limit; full output saved to file when available.]`;
 	result.outputTruncated = true;
 }
 

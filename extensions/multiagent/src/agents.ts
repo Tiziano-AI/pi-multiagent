@@ -215,24 +215,25 @@ function isContainedPath(parent: string, child: string): boolean {
 	return normalizedChild === normalizedParent || normalizedChild.startsWith(`${normalizedParent}${sep}`);
 }
 
-function isProjectScopedUserAgentsDir(userAgentsDir: string, projectAgentsDir: string | undefined, cwd: string): boolean {
+function isProjectScopedUserAgentsDir(userAgentsDir: string, projectAgentsDir: string | undefined, cwd: string, globalPiDir: string): boolean {
 	const userDir = resolve(userAgentsDir);
 	const userRealDir = safeRealpath(userDir);
-	const projectRoots = projectRootCandidates(cwd, projectAgentsDir);
+	const projectRoots = projectRootCandidates(cwd, projectAgentsDir, globalPiDir);
 	return projectRoots.some((root) => isContainedPath(root, userDir) || (userRealDir !== undefined && isContainedPath(root, userRealDir)));
 }
 
-function projectRootCandidates(cwd: string, projectAgentsDir: string | undefined): string[] {
+function projectRootCandidates(cwd: string, projectAgentsDir: string | undefined, globalPiDir: string): string[] {
 	const candidates = new Set<string>();
 	if (projectAgentsDir) addPathAndRealpath(candidates, dirname(dirname(resolve(projectAgentsDir))));
-	addNearestProjectRoots(candidates, resolve(cwd));
+	addNearestProjectRoots(candidates, resolve(cwd), globalPiDir);
 	const realCwd = safeRealpath(resolve(cwd));
-	if (realCwd) addNearestProjectRoots(candidates, realCwd);
+	const realGlobalPiDir = safeRealpath(globalPiDir);
+	if (realCwd) addNearestProjectRoots(candidates, realCwd, realGlobalPiDir ?? globalPiDir);
 	return [...candidates];
 }
 
-function addNearestProjectRoots(candidates: Set<string>, cwd: string): void {
-	const nearestPi = findNearestProjectPiMarker(cwd);
+function addNearestProjectRoots(candidates: Set<string>, cwd: string, globalPiDir: string): void {
+	const nearestPi = findNearestProjectPiMarker(cwd, globalPiDir);
 	if (nearestPi) addPathAndRealpath(candidates, dirname(nearestPi));
 	const nearestGit = findNearestProjectGitDir(cwd);
 	if (nearestGit) addPathAndRealpath(candidates, dirname(nearestGit));
@@ -252,50 +253,58 @@ function isDirectory(path: string): boolean {
 	}
 }
 
-export function findNearestProjectAgentsDir(cwd: string): string | undefined {
-	const projectPiDir = findNearestProjectPiDir(cwd);
+export function findNearestProjectAgentsDir(cwd: string, globalPiDir = getGlobalPiDir()): string | undefined {
+	const projectPiDir = findNearestProjectPiDir(cwd, globalPiDir);
 	if (!projectPiDir) return undefined;
 	const candidate = join(projectPiDir, "agents");
 	return isDirectory(candidate) ? candidate : undefined;
 }
 
-function findNearestProjectPiDir(cwd: string): string | undefined {
-	return findNearestProjectDir(cwd, ".pi");
+function findNearestProjectPiDir(cwd: string, globalPiDir: string): string | undefined {
+	return findNearestProjectDir(cwd, ".pi", globalPiDir);
 }
 
-function findNearestProjectPiMarker(cwd: string): string | undefined {
-	return findNearestProjectMarker(cwd, ".pi");
+function findNearestProjectPiMarker(cwd: string, globalPiDir: string): string | undefined {
+	return findNearestProjectMarker(cwd, ".pi", globalPiDir);
 }
 
 function findNearestProjectGitDir(cwd: string): string | undefined {
 	return findNearestProjectMarker(cwd, ".git");
 }
 
-function findNearestProjectMarker(cwd: string, name: string): string | undefined {
+function findNearestProjectMarker(cwd: string, name: string, ignoredPath?: string): string | undefined {
 	let current = resolve(cwd);
 	while (true) {
 		const candidate = join(current, name);
 		const stats = safeLstat(candidate);
-		if (stats?.isDirectory() || stats?.isFile() || stats?.isSymbolicLink()) return candidate;
+		if ((stats?.isDirectory() || stats?.isFile() || stats?.isSymbolicLink()) && !isIgnoredProjectMarker(candidate, ignoredPath)) return candidate;
 		const parent = dirname(current);
 		if (parent === current) return undefined;
 		current = parent;
 	}
 }
 
-function findNearestProjectDir(cwd: string, name: string): string | undefined {
+function findNearestProjectDir(cwd: string, name: string, ignoredPath?: string): string | undefined {
 	let current = resolve(cwd);
 	while (true) {
 		const candidate = join(current, name);
-		if (safeLstat(candidate)?.isDirectory()) return candidate;
+		if (safeLstat(candidate)?.isDirectory() && !isIgnoredProjectMarker(candidate, ignoredPath)) return candidate;
 		const parent = dirname(current);
 		if (parent === current) return undefined;
 		current = parent;
 	}
 }
 
+function isIgnoredProjectMarker(candidate: string, ignoredPath: string | undefined): boolean {
+	return ignoredPath !== undefined && resolve(candidate) === resolve(ignoredPath);
+}
+
+function getGlobalPiDir(): string {
+	return join(homedir(), ".pi");
+}
+
 export function getDefaultUserAgentsDir(env: NodeJS.ProcessEnv = process.env): string {
-	return join(env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"), "agents");
+	return join(env.PI_CODING_AGENT_DIR ?? join(getGlobalPiDir(), "agent"), "agents");
 }
 
 export function normalizeLibraryOptions(input: {
@@ -317,12 +326,14 @@ export function discoverAgents(options: {
 	library: LibraryOptions;
 	userAgentsDir?: string;
 	projectAgentsDir?: string;
+	globalPiDir?: string;
 }): AgentDiscoveryResult {
 	const diagnostics: AgentDiagnostic[] = [];
+	const globalPiDir = options.globalPiDir ?? getGlobalPiDir();
 	const userAgentsDir = options.userAgentsDir ?? getDefaultUserAgentsDir();
-	const projectAgentsDir = options.projectAgentsDir ?? findNearestProjectAgentsDir(options.cwd);
+	const projectAgentsDir = options.projectAgentsDir ?? findNearestProjectAgentsDir(options.cwd, globalPiDir);
 	const requestedSources = new Set(options.library.sources);
-	const unsafeUserAgentsDir = isProjectScopedUserAgentsDir(userAgentsDir, projectAgentsDir, options.cwd);
+	const unsafeUserAgentsDir = isProjectScopedUserAgentsDir(userAgentsDir, projectAgentsDir, options.cwd, globalPiDir);
 	const activeSources = SOURCE_PRECEDENCE.filter(
 		(source) => requestedSources.has(source) && (source !== "user" || !unsafeUserAgentsDir) && (source !== "project" || options.library.projectAgents === "allow"),
 	);

@@ -15,7 +15,7 @@ Read in this order when the task touches product, docs, packaging, or runtime be
 5. `package.json` — npm identity, Pi manifest, scripts, file inclusion, and peer dependencies.
 6. `extensions/multiagent/index.ts` — extension entry point and `agent_team` registration.
 7. `extensions/multiagent/src/schemas.ts` and `extensions/multiagent/src/planning.ts` — public input contract and runtime validation.
-8. `extensions/multiagent/src/delegation.ts`, `child-launch.ts`, `child-runtime.ts`, `json-events.ts`, `result-format.ts`, and `failure-provenance.ts` — execution, launch boundary, capture, and model-facing output.
+8. `extensions/multiagent/src/delegation.ts`, `handoff.ts`, `child-launch.ts`, `child-runtime.ts`, `json-events.ts`, `result-format.ts`, and `failure-provenance.ts` — execution, automatic upstream handoff, launch boundary, capture, and model-facing output.
 9. `extensions/multiagent/src/agents.ts` and `library-policy.ts` — package/user/project library discovery and trust policy.
 10. `agents/*.md` — bundled reusable package agents.
 11. `tests/` — executable contract and package artifact checks.
@@ -40,14 +40,14 @@ Keep all surfaces aligned to these invariants:
 
 - Expose one public tool, `agent_team`, with `catalog` and `run` actions.
 - Use source-qualified library refs such as `package:reviewer`; bare library names are not resolved.
-- Inline agents are first-class and default to no tools.
-- Library agents are optional seeds from package, user, or explicitly trusted project sources.
-- Project agents are denied by default; `projectAgents: "confirm"` fails closed without UI.
+- Inline agents are first-class and default to no tools unless automatic oversized-output handoff adds `read` for artifact refs.
+- Library agents are optional seeds from package (`agents/*.md`), user (`${PI_CODING_AGENT_DIR}/agents` or `~/.pi/agent/agents`), or explicitly trusted project (nearest project `.pi/agents`) sources.
+- Project agents are denied by default; `projectAgents: "confirm"` fails closed without UI. The global Pi config root `~/.pi` is not a project `.pi` marker.
 - Child Pi launches must keep `--no-session --no-extensions --no-context-files --no-skills --no-prompt-templates --no-themes --system-prompt ""` unless the product contract changes explicitly.
-- Child tool access is an allowlist. Do not let children inherit ambient tools.
+- Child tool access is an allowlist. Do not let children inherit ambient tools; the only runtime augmentation is `read` for oversized upstream artifact refs.
 - Bash-enabled children are refused in cwd trees with project `.pi/settings.json` nodes.
 - Upstream, tool, repo, quoted, and subagent output is untrusted evidence, not instructions.
-- `file-ref` handoff requires an explicit receiving agent with the exact `read` tool.
+- Caller-selected `preview`, `full`, `file-ref`, and `maxChars` upstream policies are retired; upstream handoff is automatic: inline through 100000 chars, artifact ref above that.
 - Preserve raw same-session evidence apart from bounded capture, truncation, and delimiter-safe rendering.
 - Do not add output-laundering, credential filtering, old-schema fallback, or parallel schemas unless the user explicitly changes the product contract.
 - There is no implicit per-step timeout. Encourage `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted, or tool-using runs.
@@ -79,7 +79,7 @@ git diff --check
 
 `pnpm run gate` already runs unit tests, fake Pi smoke, package artifact assertions, package-load checks, and source-size checks.
 
-For live integration changes, also reload Pi and run a focused live smoke with `agent_team` covering catalog refs, bare-name rejection, source-qualified package refs, raw evidence, file-ref read, synthesis, failure provenance, and bash/project-settings denial.
+For live integration changes, also reload Pi and run a focused live smoke with `agent_team` covering catalog refs, bare-name rejection, source-qualified package refs, raw evidence, automatic oversized-output artifact refs, synthesis, failure provenance, and bash/project-settings denial.
 
 ## Release discipline
 
