@@ -40,6 +40,9 @@ for (const forbidden of [
 	"pnpm-lock.yaml",
 	"tests/smoke-pi.ts",
 	"tests/check-pack.ts",
+	"VISION.md",
+	"ARCH.md",
+	"AGENTS.md",
 ]) {
 	assert.equal(paths.has(forbidden), false, `packed artifact should not include ${forbidden}`);
 }
@@ -52,9 +55,6 @@ function requiredPackedFiles(): string[] {
 	return [
 		"package.json",
 		"README.md",
-		"AGENTS.md",
-		"VISION.md",
-		"ARCH.md",
 		"LICENSE",
 		...collectFiles("agents", ".md"),
 		...collectFiles("assets", ".webp"),

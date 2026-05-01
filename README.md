@@ -1,18 +1,19 @@
 # pi-multiagent
 
-`pi-multiagent` installs one Pi extension tool, `agent_team`, for delegating from the current parent conversation to isolated child Pi processes in a bounded DAG, with explicit tools, source-qualified agents, automatic evidence handoff, and failure provenance.
+`pi-multiagent` is a Pi extension for delegation.
 
-Use it when one assistant pass is the wrong shape: broad reconnaissance, competing plans, adversarial critique, scoped implementation, independent review, and synthesis all benefit from separate context and a visible graph.
+It gives Pi's main assistant one new tool, `agent_team`. With that tool, the assistant can start a few short-lived helper agents, give each helper a narrow job and explicit tools, and bring their findings back into the main conversation.
 
-## What makes it useful
+Example: before editing, the assistant can ask one helper to map the relevant files, another to review risk, another to check the docs, and then synthesize the evidence. You still talk to one assistant. This package gives that assistant a controlled way to split the work.
 
-- **Isolated child Pi processes:** each step launches a child Pi process with no child session inheritance and no ambient extensions, context files, skills, prompt templates, or themes.
-- **Reviewable DAGs:** steps declare `needs`, concurrency is bounded, and side-effectful work can be serialized instead of hidden in a long prompt.
-- **Source-qualified reusable agents:** call `catalog`, then invoke exact refs such as `package:reviewer`, `user:planner`, or trusted `project:auditor`.
-- **Explicit tool boundaries:** inline agents default to no tools; library agents use declared tools only unless the caller overrides them.
-- **Evidence handoff:** upstream output is automatically attached to downstream tasks as untrusted evidence, not instructions.
-- **Failure provenance:** parent-observed process failures, child-authored text, diagnostics, stderr previews, and first observed causes stay distinguishable.
-- **Checked-in choreography:** `graphFile` lets a complex run live as a reviewed JSON file instead of an unreadable inline tool argument.
+After installation, Pi has:
+
+- `agent_team`, the tool the assistant can call to run helper-agent teams.
+- `/skill:pi-multiagent`, the guide that teaches the assistant when to use the tool, how to design teams, how to use reusable roles, and how to grow a useful catalog over time.
+- Bundled catalog agents such as reviewers, planners, scouts, and synthesizers.
+- Checked graph examples that can be copied into a workspace and adapted.
+
+Humans install the package, choose which sources and tools to trust, and review the result. The assistant uses the tool.
 
 ## Install
 
@@ -22,7 +23,7 @@ From npm:
 pi install npm:pi-multiagent
 ```
 
-From GitHub. Append `@vX.Y.Z` to pin a release tag:
+From GitHub:
 
 ```bash
 pi install git:github.com/Tiziano-AI/pi-multiagent
@@ -51,18 +52,36 @@ After installing in a running Pi session, use `/reload`.
 
 ## Extension and skill
 
-Installing this package gives Pi two related surfaces:
+The extension adds one public tool: `agent_team`.
 
-- **Extension tool:** `agent_team`, the tool a parent assistant calls to run isolated child Pi processes.
-- **Package skill:** `/skill:pi-multiagent`, the agent-facing operating guide for when and how to catalog agents, design graphs, use `graphFile`, troubleshoot failures, and safely improve this package itself with agent teams.
+The tool has two modes:
 
-This README is for humans installing, evaluating, and operating the package. Agents should use the skill for detailed invocation rules and graph-design guidance.
+- `catalog` lists reusable agents available from the package, your user agent directory, or a trusted project.
+- `run` launches a small graph of helper agents and returns their output to the parent conversation.
+
+The package also includes `/skill:pi-multiagent`. Agents should use the skill for detailed invocation rules, graph design, catalog use, catalog growth, troubleshooting, and improving this package safely with agent teams.
+
+This README is for people. It explains what the package makes available to Pi and what to watch for. The skill is for the model.
+
+## What the assistant can do with it
+
+The assistant can:
+
+- hand-craft one-off helper agents for the current task;
+- use reusable agents from the catalog, such as `package:reviewer`;
+- run helpers in dependency order instead of one long prompt;
+- pass one helper's output to another as evidence, not instructions;
+- ask for a final synthesis across multiple lanes;
+- move a reusable graph into a checked-in JSON file;
+- propose reusable user or project catalog agents when an inline role keeps proving useful.
+
+Recurring inline roles can become reusable user or project catalog agents over time. Keep the authoring and trust rules in `/skill:pi-multiagent`; this README only names the path.
 
 ## First success
 
-This ladder keeps human first success small. Agents that need deeper graph-design rules should load `/skill:pi-multiagent`.
+Start small. These examples use only bundled package agents and deny project agents.
 
-1. **Discover package agents.** Catalog output is the authoritative package-agent metadata: refs, tools, thinking level, model, description, path, and SHA prefix.
+1. **Discover package agents.** Catalog output is authoritative for discovered agent metadata: refs, tools, thinking level, model, description, path, and SHA prefix.
 
 ```json
 {
@@ -155,7 +174,7 @@ This ladder keeps human first success small. Agents that need deeper graph-desig
 }
 ```
 
-4. **Move reusable choreography into a file.** Copy and adapt a cookbook JSON file into the current workspace, then run it with `graphFile`. `graphFile` loads a complete static run graph from cwd; it is not a runtime template API or parameterization system.
+4. **Move reusable choreography into a file.** Copy and adapt a cookbook JSON file into the current workspace, then run it with `graphFile`.
 
 ```json
 {
@@ -164,146 +183,61 @@ This ladder keeps human first success small. Agents that need deeper graph-desig
 }
 ```
 
-Packaged examples are references to copy and adapt; `graphFile` does not load package examples by name. It is mutually exclusive with inline run fields and must be a relative `.json` path to a regular file inside the current working directory; nested `graphFile` wrappers and symlinks are denied.
+Packaged examples are references to copy and adapt. `graphFile` does not load package examples by name. It loads one complete relative `.json` file inside the current working directory. It is not a runtime template API or parameterization system.
 
-## Reading results
+## Agents and catalogs
 
-- Catalog output shows active sources and source-qualified refs. Treat it as authoritative for package-agent metadata.
-- Run output starts with the objective and final synthesis when present, then step summary, step outputs, and diagnostics.
-- Failed, blocked, timed-out, or aborted steps include status, `failureCause`, and failure provenance. Child-authored explanations do not override parent-observed process facts.
-- Large upstream outputs may appear as mode `0600` file refs; receivers get `read` only when that artifact handoff needs it.
+Inline agents are written directly inside one `run` call. They are best for one-off roles, experiments, and task-specific specialists. Inline agents default to no tools.
 
-## Use when
+Catalog agents are reusable roles. Their names are always source-qualified:
 
-- Separate context improves reconnaissance, critique, implementation, review, or synthesis.
-- You need package, user, or explicitly trusted project agents by source-qualified ref.
-- The work benefits from dependency steps, bounded concurrency, serialized side effects, final fan-in, or partial-failure triage.
-- You want large upstream output and failure facts passed forward without inventing your own handoff protocol.
-- A complex graph should be checked into the repo and reviewed before it runs.
+- `package:name`: bundled agents shipped with this package.
+- `user:name`: personal agents from your Pi user agent directory.
+- `project:name`: project agents from a trusted repository.
 
-## Do not use when
+Bare names are invalid. Use `package:reviewer`, not `reviewer`.
 
-- A direct tool call or one assistant pass is enough.
-- Write-capable agents would touch overlapping files without serialization or explicit ownership.
-- The user wants a human slash-command workflow rather than model-facing delegation.
-- The plan depends on filtering, laundering, or trusting subagent text instead of controlling sources, tools, and launch boundaries.
-- Required approval is missing for destructive, externally visible, privacy-sensitive, or materially choice-dependent work.
+Run `catalog` before using reusable agents. Catalog output is authoritative for discovered agent metadata. Do not copy static agent tables into your own docs or prompts.
 
-## Mental model
+Project agents are repository-controlled prompts. Keep them denied unless you trust the repository. `projectAgents: "confirm"` fails closed without UI; use `"allow"` only when trust is explicit.
 
-```text
-parent Pi conversation
-  -> agent_team tool call
-  -> bounded DAG of isolated child Pi processes
-  -> upstream evidence handoff
-  -> optional synthesis
-  -> parent decides the next action
-```
+## Graph files and examples
 
-The parent stays in the current conversation. Children are separate Pi processes launched with `--no-session`; they do not inherit the parent session, context files, skills, extensions, prompt templates, themes, or ambient tools. If a child needs repo-specific instructions, put them in that step's task or output contract.
+Use `graphFile` when a complete graph is easier to review as JSON than as an inline tool call. The file must be a regular relative `.json` file inside cwd and is limited to 256 KiB. Nested `graphFile` wrappers and symlinks are denied.
 
-## Agents and catalog provenance
-
-Inline agents are defined inside one `run` call. They default to no tools unless an oversized upstream artifact needs `read` for handoff.
-
-Library agents are source-qualified:
-
-```text
-package:reviewer
-user:reviewer
-project:reviewer
-```
-
-Bare library names are invalid. Use `package:reviewer`, not `reviewer`.
-
-Library discovery is explicit:
-
-| Source | Search path | Ref form | Default | Trust behavior |
-| --- | --- | --- | --- | --- |
-| `package` | Bundled `agents/*.md` in this package. | `package:name` | enabled | Package-owned prompts shipped with `pi-multiagent`. |
-| `user` | `${PI_CODING_AGENT_DIR}/agents/*.md`, or `~/.pi/agent/agents/*.md` when unset. | `user:name` | enabled | Personal prompts. Denied when the directory resolves inside the current project root; symlinked user-agent files are denied. |
-| `project` | Nearest ancestor project `.pi/agents/*.md`; global `~/.pi` is not a project marker. | `project:name` | disabled | Repository-controlled prompts. Requires `library.sources` plus `projectAgents: "confirm"` or `"allow"`. |
-
-`library.query` is a case-insensitive substring filter over catalog metadata, not full prompt bodies. Role names or refs are the safest queries. Duplicate names across sources coexist because the source is part of the ref.
-
-For package-agent role-selection heuristics, graph design, and package self-improvement workflows, have the agent load `/skill:pi-multiagent` after checking the runtime catalog.
-
-## Trust boundary
-
-Each child launch includes:
-
-```text
---mode json
--p
---no-session
---no-extensions
---no-context-files
---no-skills
---no-prompt-templates
---no-themes
---system-prompt ""
-```
-
-The generated agent prompt is appended with `--append-system-prompt`; the delegated task is sent on stdin.
-
-Tool access is an allowlist:
-
-- omitted inline `tools`: no tools unless oversized-output handoff must add `read`
-- `tools: []`: no tools unless oversized-output handoff must add `read`
-- `tools: ["read", "grep"]`: exactly those tools unless oversized-output handoff must add `read`
-- library tools: declared by the library prompt unless overridden
-
-This package currently allows `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write` for child tool allowlists. Add `bash` only when command execution is needed and trusted. Bash-enabled children are refused in cwd trees with `.pi/settings.json` because project settings can alter shell behavior.
-
-Child Pi processes inherit the parent OS process environment needed to run Pi and provider clients. `agent_team` does not scrub environment variables or credentials. Do not grant `bash` to untrusted children.
-
-`agent_team` is not an OS sandbox, not a same-UID filesystem isolation boundary, and not a secret filter. Mode `0600` temp artifacts protect against other OS users, not against children that were explicitly given filesystem-capable tools.
-
-## Graph cookbook
-
-The cookbook contains schema-checked starting graphs. They are documentation artifacts, not a runtime template API. Copy a JSON file, run catalog to verify refs in the current environment, replace the objective, tasks, and output contracts, then run the edited graph inline or through `graphFile`.
-
-Everyday examples:
+The packaged examples are schema-checked starting points:
 
 - [`examples/graphs/read-only-audit-fanout.json`](examples/graphs/read-only-audit-fanout.json): read-only mapping plus contract, docs, and risk review lanes.
 - [`examples/graphs/docs-examples-alignment.json`](examples/graphs/docs-examples-alignment.json): checks that human README copy, agent skill guidance, cookbook guidance, examples, and tests stay aligned.
 - [`examples/graphs/implementation-review-gate.json`](examples/graphs/implementation-review-gate.json): maps a scoped change, plans it, stress-tests it, runs one serialized authorized worker, then reviews validation.
-
-Advanced examples:
-
 - [`examples/graphs/research-to-change-gated-loop.json`](examples/graphs/research-to-change-gated-loop.json): ambiguous product/runtime changes with discovery, competing plans, validation contract, serialized workers, reviews, and final triage.
 - [`examples/graphs/public-release-foundry.json`](examples/graphs/public-release-foundry.json): package, extension, CLI, skill, or public artifact release readiness with independent audits and human-owned publish/push/tag stop points.
 
-For graph selection, adaptation rules, and safety gates, have the agent load `/skill:pi-multiagent` and its graph cookbook reference.
+For graph selection and adaptation rules, ask the agent to load `/skill:pi-multiagent` and its graph cookbook reference.
 
-## Handoff, output, and failures
+## Boundaries
 
-Upstream step output is appended to dependent tasks as untrusted evidence, not instructions. If a downstream agent must obey something, put it in that downstream step's `task` or `outputContract`.
+Each helper is a separate child Pi process. It does not inherit the parent session, project context files, ambient extensions, skills, prompt templates, themes, or tools. If a helper needs repo-specific instructions, the parent must put them in that helper's task or output contract.
 
-There are no caller-selected handoff modes. For each upstream step, `agent_team` automatically:
+Child processes do inherit the parent OS process environment needed to run Pi and provider clients. `agent_team` does not scrub environment variables or credentials.
 
-1. copies assistant output inline when it is at most 100000 characters;
-2. persists larger assistant output to a mode `0600` temp file;
-3. passes the exact JSON-string file path to the receiver; and
-4. launches that receiver with `read` when it needs to dereference oversized upstream artifacts.
+Tool access is an allowlist. This package allows child tool allowlists to name `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`. Add `bash` only for trusted command execution. Bash-enabled children are refused when their cwd is inside a tree with `.pi/settings.json`, because project settings can alter shell behavior.
 
-The generated handoff keeps failure reason, first observed cause, and provenance outside the copied child-output block.
+`agent_team` is not an OS sandbox, not a same-UID filesystem isolation boundary, and not a secret filter. Mode `0600` temp artifacts protect against other OS users, not against children that were explicitly given filesystem-capable tools.
 
-Failures keep parent-observed facts separate from child-authored text. Failed and blocked steps include the terminal reason, first observed cause, and structured failure provenance. Retryable child Pi provider errors can auto-retry inside the child process; retry lifecycle events remain diagnostics.
+`agent_team` is not transactional and not crash-resumable. If a run is interrupted, inspect the workspace before retrying side-effectful work.
 
-`agent_team` is not transactional and not crash-resumable. Child edits are real workspace changes. If a run crashes, times out, or is aborted, inspect the workspace before retrying side-effectful work.
+## Results and failures
 
-## Troubleshooting quick checks
+Run output starts with the objective and final synthesis when present, then step summary, step outputs, and diagnostics.
 
-| Symptom | Check |
-| --- | --- |
-| Catalog has no expected role | Confirm `library.sources`, query spelling, and whether the role is package, user, or trusted project. |
-| Bare ref is rejected | Use a source-qualified ref such as `package:reviewer`; bare library names are invalid. |
-| Project agents do not load | `projectAgents` defaults to `deny`; `confirm` fails closed without UI; use `allow` only for trusted repositories. |
-| `graphFile` is rejected | Use a relative `.json` regular file inside cwd; do not pass inline run fields with `graphFile`. |
-| Bash child is refused | The step cwd is inside a tree with `.pi/settings.json`; remove `bash`, change cwd, or run outside that project-settings tree. |
-| Downstream step is blocked | Inspect failed dependency status, `failureCause`, and failure provenance before retrying. |
-| Run appears stuck | Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, or tool-using graphs. |
+Upstream output is passed to dependent steps as evidence, not instructions. If a downstream helper must obey something, put it in that helper's own task or output contract.
+
+Failed, blocked, timed-out, or aborted steps include status, `failureCause`, and failure provenance. Child-authored explanations do not override parent-observed process facts.
+
+Handoff is automatic. Assistant output up to 100000 characters is copied inline to dependent steps. Larger output is written to a mode `0600` temp file, and the receiver gets `read` only when it needs to dereference that artifact.
+
+The model-facing aggregate output is capped at 2000 lines or 50KB. When possible, the full aggregate is written to a temp file.
 
 ## Limits
 
@@ -324,19 +258,28 @@ Failures keep parent-observed facts separate from child-authored text. Failed an
 
 Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted work, bash-using work, or other tool-using runs.
 
+## Troubleshooting quick checks
+
+| Symptom | Check |
+| --- | --- |
+| Catalog has no expected role | Confirm `library.sources`, query spelling, and whether the role is package, user, or trusted project. |
+| Bare ref is rejected | Use a source-qualified ref such as `package:reviewer`; bare library names are invalid. |
+| Project agents do not load | `projectAgents` defaults to `deny`; `confirm` fails closed without UI; use `allow` only for trusted repositories. |
+| `graphFile` is rejected | Use a relative `.json` regular file inside cwd; do not pass inline run fields with `graphFile`. |
+| Bash child is refused | The step cwd is inside a tree with `.pi/settings.json`; remove `bash`, change cwd, or run outside that project-settings tree. |
+| Downstream step is blocked | Inspect failed dependency status, `failureCause`, and failure provenance before retrying. |
+| Run appears stuck | Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, or tool-using graphs. |
+
 ## Package contents
 
 | Surface | Purpose |
 | --- | --- |
-| `agent_team` | Model-facing tool registered by the Pi extension. |
-| `/skill:pi-multiagent` | Agent-facing guidance for using, reviewing, troubleshooting, and improving `agent_team` and this package with bounded teams. |
+| `agent_team` | Tool the assistant can call to run helper-agent teams. |
+| `/skill:pi-multiagent` | Guidance for the assistant when it uses, reviews, troubleshoots, or improves `agent_team` and this package with bounded teams. |
 | `agents/*.md` | Reusable library prompts addressed as `package:name`. |
 | `examples/graphs/*.json` | Schema-checked cookbook examples. |
 | `assets/pi-multiagent-gallery.webp` | Pi package-gallery preview image referenced by `package.json` `pi.image`. |
-| `README.md` | Front-facing operator and evaluator guide. |
-| `ARCH.md` | Normative runtime contract, trust boundary, lifecycle, and provenance owner. |
-| `VISION.md` | Product purpose, principles, success criteria, and non-goals. |
-| `AGENTS.md` | Repo-local work, validation, and release procedure. |
+| `README.md` | Human-facing install, evaluation, operation, and validation guide. |
 
 Bundled agents are not Pi skills. They are prompts for `agent_team` library refs.
 
@@ -353,9 +296,6 @@ git diff --check
 
 ## Reference
 
-- [`ARCH.md`](ARCH.md) defines the runtime contract.
-- [`VISION.md`](VISION.md) defines product intent and non-goals.
-- [`AGENTS.md`](AGENTS.md) defines repo-local work rules and release procedure.
-- [`skills/pi-multiagent/SKILL.md`](skills/pi-multiagent/SKILL.md) is the package-owned skill.
+- [`skills/pi-multiagent/SKILL.md`](skills/pi-multiagent/SKILL.md) is the package-owned skill for the assistant.
 - [`skills/pi-multiagent/references/graph-cookbook.md`](skills/pi-multiagent/references/graph-cookbook.md) explains reusable graph choreography.
 - [`examples/graphs`](examples/graphs) contains schema-checked graph-cookbook examples.

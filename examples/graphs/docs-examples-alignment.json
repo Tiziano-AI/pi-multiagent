@@ -40,7 +40,7 @@
     {
       "id": "agent-guidance-map",
       "agent": "agent-guidance-reader",
-      "task": "Inspect the package skill, graph cookbook, repo-local guide, and references for agent-facing invocation, graph design, troubleshooting, and self-improvement guidance. Do not edit.",
+      "task": "Inspect the package skill, graph cookbook, and references for agent-facing invocation, graph design, troubleshooting, and self-improvement guidance. Do not edit.",
       "outputContract": "Agent-facing guidance findings with paths, missing decision rules, missing cookbook patterns, and validation expectations."
     },
     {

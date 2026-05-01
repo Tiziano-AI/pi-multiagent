@@ -4,11 +4,14 @@ node_modules/
 .npm/
 .yarn/
 
-# Local Pi and control-plane runtime state
+# Local Pi state, agent notes, and control-plane files
 .pi/
 CONTINUE.md
 PLAN.md
 HANDOFF.md
+AGENTS.md
+ARCH.md
+VISION.md
 
 # Credentials and local environment
 env/

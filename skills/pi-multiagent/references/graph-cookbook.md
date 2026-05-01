@@ -9,6 +9,7 @@ This cookbook is agent-facing. `README.md` gives humans the install, first-succe
 - Catalog first: use `action: "catalog"` before choosing reusable package, user, or project refs.
 - Use one focused catalog query that matches metadata, not full prompt text. Role names/refs are safest: `scout`, `planner`, `critic`, `reviewer`, `worker`, `synthesizer`; `risk` and `synthesis` are also package-agent metadata keywords.
 - Pick the smallest graph that reduces uncertainty. Do not use cookbook ceremony when one direct tool call or one specialist step is enough.
+- Repeated inline roles may be proposed for promotion into reusable `user:` or trusted `project:` catalog agents; repeated multi-step choreography may become a reviewed `graphFile`. Do not confuse reusable role prompts with graph templates.
 - Parallelize read-only discovery, audit, and review lanes when their evidence ownership is disjoint.
 - Narrow package-agent tools for read-only lanes when the bundled role has broader defaults.
 - Use `needs` to serialize write-capable or side-effectful steps unless file/effect ownership is explicitly disjoint.

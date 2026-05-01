@@ -2,7 +2,7 @@
   "name": "pi-multiagent",
   "version": "0.3.4",
   "type": "module",
-  "description": "Pi package for bounded multi-agent delegation through isolated child Pi processes.",
+  "description": "Adds the agent_team delegation tool and pi-multiagent skill to Pi.",
   "keywords": [
     "pi-package",
     "pi",
@@ -21,9 +21,6 @@
   "homepage": "https://github.com/Tiziano-AI/pi-multiagent#readme",
   "files": [
     "README.md",
-    "AGENTS.md",
-    "VISION.md",
-    "ARCH.md",
     "LICENSE",
     "agents/*.md",
     "assets/*.webp",

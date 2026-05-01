@@ -8,9 +8,6 @@ const version = readPackageVersion();
 const publicFiles = [
 	"package.json",
 	"README.md",
-	"ARCH.md",
-	"VISION.md",
-	"AGENTS.md",
 	...collectFiles("agents", ".md"),
 	...collectFiles("examples", ".json"),
 	...collectFiles("skills", ".md"),
@@ -106,21 +103,17 @@ function checkRuntimeCatalogIsAuthoritative(): void {
 		if (text.includes(staticReadmeTable) || text.includes(staticSkillTable)) {
 			failures.push(`${file}: package-agent tools/thinking tables must not duplicate runtime catalog output`);
 		}
-		if (!text.includes("authoritative") || !text.includes("catalog")) failures.push(`${file}: must state that runtime catalog output is authoritative for package-agent metadata`);
+		if (!text.includes("authoritative") || !text.includes("catalog")) failures.push(`${file}: must state that runtime catalog output is authoritative for discovered agent metadata`);
 	}
 }
 
 function checkPublicContractInvariants(): void {
 	const readme = readFileSync(join(packageRoot, "README.md"), "utf8");
-	const arch = readFileSync(join(packageRoot, "ARCH.md"), "utf8");
-	const vision = readFileSync(join(packageRoot, "VISION.md"), "utf8");
 	const skill = readFileSync(join(packageRoot, "skills/pi-multiagent/SKILL.md"), "utf8");
 	const cookbook = readFileSync(join(packageRoot, "skills/pi-multiagent/references/graph-cookbook.md"), "utf8");
-	requireFragments("README.md", readme, ["not an OS sandbox", "evidence, not instructions", "not transactional", "not crash-resumable", "not a runtime template API", "2000 lines or 50KB", "Extension and skill", "Reading results", "Troubleshooting quick checks", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
-	requireFragments("ARCH.md", arch, ["not an OS sandbox", "2000 lines or 50KB", "graphFile", "not atomic", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
-	requireFragments("VISION.md", vision, ["No OS sandbox", "No hidden child inheritance", "copyable examples", "README serves humans", "package skill serves agents"]);
-	requireFragments("skills/pi-multiagent/SKILL.md", skill, ["Runtime catalog output is authoritative", "evidence, not instructions", "not a runtime template API", "Human and agent surfaces", "Improving this package", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
-	requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, ["not a runtime template API", "graphFile", "schema-checked examples", "Read-Only Audit Fanout", "Docs/Examples Alignment", "Implementation Review Gate", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
+	requireFragments("README.md", readme, ["not an OS sandbox", "evidence, not instructions", "not transactional", "not crash-resumable", "not a runtime template API", "2000 lines or 50KB", "Extension and skill", "Results and failures", "Troubleshooting quick checks", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
+	requireFragments("skills/pi-multiagent/SKILL.md", skill, ["Runtime catalog output is authoritative", "evidence, not instructions", "not a runtime template API", "Human and agent surfaces", "Grow reusable catalogs deliberately", "Required frontmatter is `name` and `description`", "Verify the source-qualified ref", "Improving this package", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
+	requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, ["not a runtime template API", "graphFile", "schema-checked examples", "Read-Only Audit Fanout", "Docs/Examples Alignment", "Implementation Review Gate", "reusable `user:` or trusted `project:` catalog agents", "inherit the parent OS process environment", "does not scrub environment variables or credentials"]);
 }
 
 function requireFragments(file: string, text: string, fragments: string[]): void {
@@ -131,7 +124,7 @@ function requireFragments(file: string, text: string, fragments: string[]): void
 
 function checkSkillReferenceShape(): void {
 	const skill = readFileSync(join(packageRoot, "skills/pi-multiagent/SKILL.md"), "utf8");
-	for (const target of ["[README](../../README.md)", "[ARCH](../../ARCH.md)", "[VISION](../../VISION.md)", "[AGENTS](../../AGENTS.md)"]) {
+	for (const target of ["[README](../../README.md)"]) {
 		if (!skill.includes(target)) failures.push(`skills/pi-multiagent/SKILL.md: missing linked reference ${target}`);
 	}
 }
@@ -187,13 +180,15 @@ function checkGraduatedQuickstartAndCookbook(): void {
 		"Copy and adapt a cookbook JSON file into the current workspace",
 		"Packaged examples are references to copy and adapt",
 		"Agents should use the skill for detailed invocation rules",
-		"safely improve this package itself with agent teams",
+		"improving this package safely with agent teams",
+		"Recurring inline roles can become reusable user or project catalog agents over time",
 	]);
 	requireFragments("skills/pi-multiagent/SKILL.md", skill, [
 		"`README.md` is for humans",
 		"This skill is for agents",
 		"help improve `pi-multiagent` itself",
 		"Keep README human/operator-facing",
+		"Grow reusable catalogs deliberately",
 	]);
 	for (const graph of ["read-only-audit-fanout.json", "docs-examples-alignment.json", "implementation-review-gate.json", "research-to-change-gated-loop.json", "public-release-foundry.json"]) {
 		requireFragments("README.md", readme, [graph]);
