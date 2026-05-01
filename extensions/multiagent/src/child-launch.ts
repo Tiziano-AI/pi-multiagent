@@ -4,6 +4,7 @@ import { type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentInvocationDefaults, ResolvedAgent } from "./types.ts";
+import { childToolNames } from "./tool-policy.ts";
 
 export interface SpawnOptions {
 	cwd: string;
@@ -20,6 +21,7 @@ export function buildPiArgs(agent: ResolvedAgent, defaults: AgentInvocationDefau
 		"-p",
 		"--no-session",
 		"--no-extensions",
+		...extensionArgs(agent),
 		"--no-context-files",
 		"--no-skills",
 		"--no-prompt-templates",
@@ -33,8 +35,20 @@ export function buildPiArgs(agent: ResolvedAgent, defaults: AgentInvocationDefau
 	const thinking = agent.thinking === "inherit" || agent.thinking === undefined ? defaults.thinking : agent.thinking;
 	if (model) args.push("--model", model);
 	if (thinking) args.push("--thinking", thinking);
-	if (agent.tools.length === 0) args.push("--no-tools");
-	else args.push("--tools", agent.tools.join(","));
+	const tools = childToolNames(agent);
+	if (tools.length === 0) args.push("--no-tools");
+	else args.push("--tools", tools.join(","));
+	return args;
+}
+
+function extensionArgs(agent: ResolvedAgent): string[] {
+	const args: string[] = [];
+	const seen = new Set<string>();
+	for (const grant of agent.extensionTools) {
+		if (seen.has(grant.source.realpath)) continue;
+		seen.add(grant.source.realpath);
+		args.push("--extension", grant.source.realpath);
+	}
 	return args;
 }
 

@@ -5,6 +5,9 @@ import { type Static, Type } from "typebox";
 import {
 	AGENT_REFERENCE_PATTERN,
 	AGENT_TEAM_ACTION_VALUES,
+	BUILTIN_CHILD_TOOL_NAMES,
+	EXTENSION_SOURCE_ORIGIN_VALUES,
+	EXTENSION_SOURCE_SCOPE_VALUES,
 	INVOCATION_AGENT_KIND_VALUES,
 	LIBRARY_SOURCE_VALUES,
 	MAX_CONCURRENCY,
@@ -60,6 +63,31 @@ const LibrarySchema = Type.Object(
 	StrictObjectOptions,
 );
 
+const ExtensionToolFromSchema = Type.Object(
+	{
+		source: nonEmptyText("Parent tool sourceInfo.source expected for this extension tool grant; this is provenance, not an install source.", MAX_SHORT_TEXT_FIELD_CHARS),
+		scope: Type.Optional(
+			StringEnum(EXTENSION_SOURCE_SCOPE_VALUES, {
+				description: 'Optional expected parent sourceInfo.scope: "user", "project", or "temporary".',
+			}),
+		),
+		origin: Type.Optional(
+			StringEnum(EXTENSION_SOURCE_ORIGIN_VALUES, {
+				description: 'Optional expected parent sourceInfo.origin: "package" or "top-level".',
+			}),
+		),
+	},
+	StrictObjectOptions,
+);
+
+const ExtensionToolGrantSchema = Type.Object(
+	{
+		name: Type.String({ description: 'Parent-active extension tool name to expose to this child, such as "exa_search". Built-in tools stay in tools[].', minLength: 1, maxLength: 64, pattern: TOOL_NAME_PATTERN }),
+		from: ExtensionToolFromSchema,
+	},
+	StrictObjectOptions,
+);
+
 const AgentSpecSchema = Type.Object(
 	{
 		id: publicId('Invocation-local agent id used by steps. Lowercase letters, digits, and hyphens only. Reserved: "agent-team-synthesizer".'),
@@ -70,8 +98,14 @@ const AgentSpecSchema = Type.Object(
 		description: Type.Optional(nonEmptyText("Short purpose for this invocation-local agent.", MAX_SHORT_TEXT_FIELD_CHARS)),
 		system: Type.Optional(nonEmptyText("Inline agent system prompt. Required when kind is inline.")),
 		tools: Type.Optional(
-			Type.Array(Type.String({ minLength: 1, maxLength: 64, pattern: TOOL_NAME_PATTERN }), {
-				description: 'Explicit child tool allowlist. Empty array means no tools. Inline agents default to no tools; library agents inherit declared tools unless overridden. Prefer ["read","grep","find","ls"] for read-only work. Add "bash" only when command execution is needed and trusted.',
+			Type.Array(StringEnum(BUILTIN_CHILD_TOOL_NAMES), {
+				description: 'Explicit built-in child tool allowlist. Empty array means no tools. Inline agents default to no tools; library agents inherit declared built-in tools unless overridden. Extension tools such as exa_search use extensionTools[]. Prefer ["read","grep","find","ls"] for read-only work. Add "bash" only when command execution is needed and trusted.',
+				maxItems: 24,
+			}),
+		),
+		extensionTools: Type.Optional(
+			Type.Array(ExtensionToolGrantSchema, {
+				description: 'Explicit grants for parent-active extension tools. Each grant loads the extension code into the child with --no-extensions plus explicit --extension. Grants require sourceInfo provenance and are not a sandbox.',
 				maxItems: 24,
 			}),
 		),
@@ -124,6 +158,24 @@ const SynthesisSchema = Type.Object(
 	StrictObjectOptions,
 );
 
+const ExtensionToolPolicySchema = Type.Object(
+	{
+		projectExtensions: Type.Optional(
+			StringEnum(PROJECT_AGENTS_POLICY_VALUES, {
+				description: 'Project-scoped extension tool policy. Default "deny". Use "allow" only for trusted repositories; "confirm" fails closed without UI.',
+				default: "deny",
+			}),
+		),
+		localExtensions: Type.Optional(
+			StringEnum(PROJECT_AGENTS_POLICY_VALUES, {
+				description: 'Temporary or current-workspace local extension tool policy. Default "deny". Use "allow" only for trusted local extension code; "confirm" fails closed without UI.',
+				default: "deny",
+			}),
+		),
+	},
+	StrictObjectOptions,
+);
+
 const LimitsSchema = Type.Object(
 	{
 		concurrency: Type.Optional(
@@ -147,8 +199,9 @@ export const AgentTeamSchema = Type.Object(
 			description: 'Use "catalog" to list reusable agents. Use "run" to execute a bounded graph of inline or source-qualified library agents.',
 		}),
 		objective: Type.Optional(nonEmptyText("Overall objective for the team. Required for run; rejected for catalog.")),
-		graphFile: Type.Optional(nonEmptyText("Run-only relative path to a JSON file containing a complete agent_team run graph. Mutually exclusive with objective, library, agents, steps, synthesis, and limits.", MAX_PATH_FIELD_CHARS)),
+		graphFile: Type.Optional(nonEmptyText("Run-only relative path to a JSON file containing a complete agent_team run graph. Mutually exclusive with objective, library, extensionToolPolicy, agents, steps, synthesis, and limits.", MAX_PATH_FIELD_CHARS)),
 		library: Type.Optional(LibrarySchema),
+		extensionToolPolicy: Type.Optional(ExtensionToolPolicySchema),
 		agents: Type.Optional(
 			Type.Array(AgentSpecSchema, {
 				description: "Invocation-local inline agents and reusable library bindings. Optional; steps can directly use source-qualified library refs.",

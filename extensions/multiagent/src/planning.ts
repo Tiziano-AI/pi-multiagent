@@ -12,7 +12,7 @@ import type {
 } from "./types.ts";
 import { LIBRARY_SOURCE_VALUES, PUBLIC_ID_PATTERN, SOURCE_QUALIFIED_LIBRARY_REF_PATTERN } from "./types.ts";
 import { appendDiagnostic, createRunResult, noteFailureCause, setFailureProvenance } from "./json-events.ts";
-import { validateToolNames } from "./tool-policy.ts";
+import { resolveAgentToolAccess, type ToolResolutionContext } from "./tool-policy.ts";
 
 const DEFAULT_SYNTHESIS_AGENT_ID = "agent-team-synthesizer";
 const DEFAULT_SYNTHESIS_STEP_ID = "synthesis";
@@ -40,6 +40,7 @@ export function validateActionShape(input: AgentTeamInput): AgentDiagnostic[] {
 	if (input.steps !== undefined) forbidden.push("steps");
 	if (input.synthesis !== undefined) forbidden.push("synthesis");
 	if (input.limits !== undefined) forbidden.push("limits");
+	if (input.extensionToolPolicy !== undefined) forbidden.push("extensionToolPolicy");
 	if (forbidden.length === 0) return [];
 	return [makeDiagnostic("catalog-run-fields-denied", `Catalog action rejects run-only fields: ${forbidden.join(", ")}.`, "error", "/")];
 }
@@ -56,6 +57,7 @@ export function validatePreflightShape(input: AgentTeamInput): AgentDiagnostic[]
 		if (input.steps !== undefined) forbidden.push("steps");
 		if (input.synthesis !== undefined) forbidden.push("synthesis");
 		if (input.limits !== undefined) forbidden.push("limits");
+		if (input.extensionToolPolicy !== undefined) forbidden.push("extensionToolPolicy");
 		if (forbidden.length > 0) diagnostics.push(makeDiagnostic("graph-file-inline-fields-denied", `graphFile loads the complete run graph; remove inline fields: ${forbidden.join(", ")}.`, "error", "/"));
 		return diagnostics;
 	}
@@ -69,10 +71,11 @@ export function resolveRunPlan(
 	input: AgentTeamInput,
 	libraryAgents: AgentConfig[],
 	baseDiagnostics: AgentDiagnostic[],
+	options?: ToolResolutionContext,
 ): RunPlan {
 	const diagnostics = [...baseDiagnostics];
 	const objective = normalizeRequiredText(input.objective, "objective", diagnostics, "/objective");
-	const agents = resolveAgents(input, libraryAgents, diagnostics);
+	const agents = resolveAgents(input, libraryAgents, diagnostics, options);
 	const steps = resolveSteps(input, agents, diagnostics);
 	return { objective, agents, steps, diagnostics };
 }
@@ -118,7 +121,7 @@ export function blockStep(step: TeamStepSpec, agents: ResolvedAgent[], message: 
 	return blocked;
 }
 
-function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[]): ResolvedAgent[] {
+function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], toolContext: ToolResolutionContext | undefined): ResolvedAgent[] {
 	const byId = new Map<string, ResolvedAgent>();
 	for (const [index, spec] of readAgentSpecs(input.agents).entries()) {
 		const agentPath = `/agents/${index}`;
@@ -131,7 +134,7 @@ function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diag
 			diagnostics.push(makeDiagnostic("agent-id-duplicate", `Duplicate invocation agent id: ${spec.id}.`, "error", `${agentPath}/id`));
 			continue;
 		}
-		const resolved = spec.kind === "inline" ? resolveInlineAgent(spec, diagnostics, agentPath) : resolveLibraryBinding(spec, libraryAgents, diagnostics, agentPath);
+		const resolved = spec.kind === "inline" ? resolveInlineAgent(spec, diagnostics, agentPath, toolContext) : resolveLibraryBinding(spec, libraryAgents, diagnostics, agentPath, toolContext);
 		if (resolved) byId.set(resolved.id, resolved);
 	}
 	for (const agent of libraryAgents) {
@@ -143,13 +146,14 @@ function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diag
 	return Array.from(byId.values());
 }
 
-function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnostic[], path: string): ResolvedAgent | undefined {
+function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnostic[], path: string, toolContext: ToolResolutionContext | undefined): ResolvedAgent | undefined {
 	const system = spec.system?.trim();
 	if (spec.ref !== undefined) {
 		diagnostics.push(makeDiagnostic("inline-agent-ref-denied", `Inline agent ${spec.id} cannot set ref; use kind:"library" for reusable agents.`, "error", `${path}/ref`));
 		return undefined;
 	}
-	if (!validateToolNames(spec.tools, `inline agent ${spec.id}`, diagnostics, `${path}/tools`)) return undefined;
+	const toolAccess = resolveAgentToolAccess({ tools: spec.tools, extensionTools: spec.extensionTools, label: `inline agent ${spec.id}`, toolsPath: `${path}/tools`, extensionToolsPath: `${path}/extensionTools`, diagnostics, context: toolContext });
+	if (!toolAccess) return undefined;
 	if (!system) {
 		diagnostics.push(makeDiagnostic("inline-agent-system-required", `Inline agent ${spec.id} requires system.`, "error", `${path}/system`));
 		return undefined;
@@ -160,7 +164,8 @@ function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnos
 		name: spec.id,
 		kind: "inline",
 		description: spec.description ?? spec.id,
-		tools: spec.tools ?? [],
+		tools: toolAccess.tools,
+		extensionTools: toolAccess.extensionTools,
 		model: spec.model,
 		thinking: spec.thinking,
 		systemPrompt: system,
@@ -172,8 +177,7 @@ function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnos
 	};
 }
 
-function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], path: string): ResolvedAgent | undefined {
-	if (!validateToolNames(spec.tools, `library agent binding ${spec.id}`, diagnostics, `${path}/tools`)) return undefined;
+function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], path: string, toolContext: ToolResolutionContext | undefined): ResolvedAgent | undefined {
 	if (spec.system !== undefined) {
 		diagnostics.push(makeDiagnostic("library-agent-system-denied", `Library agent binding ${spec.id} cannot override system; use an inline agent for custom prompts.`, "error", `${path}/system`));
 		return undefined;
@@ -193,10 +197,13 @@ function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentCo
 		return undefined;
 	}
 	const resolved = fromLibraryAgent(agent, spec.id);
+	const toolAccess = resolveAgentToolAccess({ tools: spec.tools ?? resolved.tools, extensionTools: spec.extensionTools, label: `library agent binding ${spec.id}`, toolsPath: `${path}/tools`, extensionToolsPath: `${path}/extensionTools`, diagnostics, context: toolContext });
+	if (!toolAccess) return undefined;
 	return {
 		...resolved,
 		description: spec.description ?? resolved.description,
-		tools: spec.tools ?? resolved.tools,
+		tools: toolAccess.tools,
+		extensionTools: toolAccess.extensionTools,
 		model: spec.model ?? resolved.model,
 		thinking: spec.thinking ?? resolved.thinking,
 		cwd: spec.cwd ?? resolved.cwd,
@@ -212,6 +219,7 @@ function fromLibraryAgent(agent: AgentConfig, id: string): ResolvedAgent {
 		kind: "library",
 		description: agent.description,
 		tools: agent.tools ?? [],
+		extensionTools: [],
 		model: agent.model,
 		thinking: agent.thinking,
 		systemPrompt: agent.systemPrompt,
@@ -231,6 +239,7 @@ function createDefaultSynthesizer(): ResolvedAgent {
 		kind: "inline",
 		description: "No-tool synthesis agent created automatically for this call.",
 		tools: [],
+		extensionTools: [],
 		model: undefined,
 		thinking: "inherit",
 		systemPrompt: [
@@ -360,6 +369,7 @@ function readAgentSpecs(input: AgentTeamInput["agents"]): InvocationAgentSpec[] 
 		description: spec.description,
 		system: spec.system,
 		tools: spec.tools,
+		extensionTools: spec.extensionTools,
 		model: spec.model,
 		thinking: spec.thinking,
 		cwd: spec.cwd,

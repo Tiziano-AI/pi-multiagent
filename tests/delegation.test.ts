@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -10,7 +10,7 @@ import { runAgentTeam } from "../extensions/multiagent/src/delegation.ts";
 import { formatFailureProvenance } from "../extensions/multiagent/src/failure-provenance.ts";
 import { writeTempMarkdown } from "../extensions/multiagent/src/output-files.ts";
 import type { SpawnOptions } from "../extensions/multiagent/src/child-launch.ts";
-import type { AgentDiscoveryResult, AgentRunResult, LibraryOptions } from "../extensions/multiagent/src/types.ts";
+import type { AgentDiscoveryResult, AgentRunResult, LibraryOptions, ParentToolInventory } from "../extensions/multiagent/src/types.ts";
 
 class FakeChild extends EventEmitter {
 	stdin = new PassThrough();
@@ -41,6 +41,19 @@ function discovery(cwd: string): AgentDiscoveryResult {
 		projectAgentsDir: undefined,
 		sources: ["package"],
 		projectAgents: "deny",
+	};
+}
+
+function parentToolsFor(extensionPath: string, names = ["exa_search"]): ParentToolInventory {
+	return {
+		apiAvailable: true,
+		errorMessage: undefined,
+		tools: names.map((name) => ({
+			name,
+			description: `${name} description`,
+			active: true,
+			sourceInfo: { path: extensionPath, source: "npm:pi-exa-tools", scope: "user", origin: "package", baseDir: undefined },
+		})),
 	};
 }
 
@@ -205,6 +218,142 @@ test("runAgentTeam launches explicit tools, model, and thinking overrides", asyn
 	await rm(root, { recursive: true, force: true });
 });
 
+test("runAgentTeam launches extension tool grants with explicit extension sources", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-extension-launch-${Date.now()}`), { recursive: true });
+	const cwd = join(root, "workspace");
+	const cache = join(root, "cache");
+	await mkdir(cwd, { recursive: true });
+	await mkdir(cache, { recursive: true });
+	const extensionPath = join(cache, "exa-extension.ts");
+	await writeFile(extensionPath, "export default function extension() {}\n", "utf8");
+	const calls: string[][] = [];
+	const prompts: string[] = [];
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "search",
+			agents: [{ id: "searcher", kind: "inline", system: "Search.", tools: ["read"], extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }, { name: "exa_fetch", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }] }],
+			steps: [{ id: "search", agent: "searcher", task: "Search." }],
+		},
+		{
+			cwd,
+			discovery: discovery(cwd),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			parentTools: parentToolsFor(extensionPath, ["exa_search", "exa_fetch"]),
+			extensionToolPolicy: { projectExtensions: "deny", localExtensions: "deny" },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: (_command, args) => {
+				calls.push(args);
+				const promptIndex = args.indexOf("--append-system-prompt");
+				if (promptIndex >= 0) prompts.push(readFileSync(args[promptIndex + 1], "utf8"));
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(calls[0].includes("--no-extensions"), true);
+	assert.equal(calls[0].filter((arg) => arg === "--extension").length, 1);
+	assert.equal(calls[0][calls[0].indexOf("--extension") + 1], realpathSync(extensionPath));
+	assert.equal(calls[0][calls[0].indexOf("--tools") + 1], "read,exa_search,exa_fetch");
+	assert.equal(prompts[0].includes("Ext tools: exa_search, exa_fetch"), true);
+	assert.equal(result.details.agents[0].extensionTools.length, 2);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam refuses extension source changes before spawn", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-extension-stale-${Date.now()}`), { recursive: true });
+	const cwd = join(root, "workspace");
+	const cache = join(root, "cache");
+	await mkdir(cwd, { recursive: true });
+	await mkdir(cache, { recursive: true });
+	const extensionPath = join(cache, "exa-extension.ts");
+	await writeFile(extensionPath, "export default function extension() {}\n", "utf8");
+	let spawned = false;
+	let mutated = false;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "search",
+			agents: [{ id: "searcher", kind: "inline", system: "Search.", extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }] }],
+			steps: [{ id: "search", agent: "searcher", task: "Search." }],
+		},
+		{
+			cwd,
+			discovery: discovery(cwd),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			parentTools: parentToolsFor(extensionPath),
+			extensionToolPolicy: { projectExtensions: "deny", localExtensions: "deny" },
+			signal: undefined,
+			onUpdate: () => {
+				if (!mutated) {
+					mutated = true;
+					writeFileSync(extensionPath, "export default function changed() { return 1; }\n", "utf8");
+				}
+			},
+			spawnProcess: () => {
+				spawned = true;
+				return new FakeChild();
+			},
+		},
+	);
+	assert.equal(spawned, false);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].errorMessage?.startsWith("Extension tool source changed before launch"), true);
+	assert.equal(result.details.steps[0].failureProvenance?.likelyRoot, "extension tool source identity changed before child launch");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam refuses directory extension source child changes before spawn", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-extension-dir-stale-${Date.now()}`), { recursive: true });
+	const cwd = join(root, "workspace");
+	const extensionDir = join(root, "cache", "exa-extension");
+	await mkdir(cwd, { recursive: true });
+	await mkdir(extensionDir, { recursive: true });
+	const indexPath = join(extensionDir, "index.ts");
+	await writeFile(indexPath, "export default function extension() {}\n", "utf8");
+	let spawned = false;
+	let mutated = false;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "search",
+			agents: [{ id: "searcher", kind: "inline", system: "Search.", extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }] }],
+			steps: [{ id: "search", agent: "searcher", task: "Search." }],
+		},
+		{
+			cwd,
+			discovery: discovery(cwd),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			parentTools: parentToolsFor(extensionDir),
+			extensionToolPolicy: { projectExtensions: "deny", localExtensions: "deny" },
+			signal: undefined,
+			onUpdate: () => {
+				if (!mutated) {
+					mutated = true;
+					writeFileSync(indexPath, "export default function changed() { return 1; }\n", "utf8");
+				}
+			},
+			spawnProcess: () => {
+				spawned = true;
+				return new FakeChild();
+			},
+		},
+	);
+	assert.equal(spawned, false);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].errorMessage?.startsWith("Extension tool source changed before launch"), true);
+	await rm(root, { recursive: true, force: true });
+});
+
 test("runAgentTeam preserves raw structured details for dynamic error fields", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-details-raw-${Date.now()}`), { recursive: true });
 	const invalidCwd = "/tmp/OPENAI_API_KEY=sk-cwd-evidence-missing";
@@ -279,6 +428,15 @@ test("runAgentTeam renders missing action without pretending run was inferred", 
 
 test("runAgentTeam catalog reports active discovery sources and raw catalog paths", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-catalog-sources-${Date.now()}`), { recursive: true });
+	const parentTools: ParentToolInventory = {
+		apiAvailable: true,
+		errorMessage: undefined,
+		tools: [
+			{ name: "exa_search", description: "ambiguous a", active: true, sourceInfo: { path: join(root, "a.ts"), source: "npm:a", scope: "user", origin: "package", baseDir: undefined } },
+			{ name: "exa_search", description: "ambiguous b", active: true, sourceInfo: { path: join(root, "b.ts"), source: "npm:b", scope: "user", origin: "package", baseDir: undefined } },
+			{ name: "exa_fetch", description: "fetch", active: true, sourceInfo: { path: join(root, "fetch.ts"), source: "npm:fetch", scope: "user", origin: "package", baseDir: undefined } },
+		],
+	};
 	const result = await runAgentTeam(
 		{ action: "catalog", library: { sources: ["project"], projectAgents: "deny" } },
 		{
@@ -302,6 +460,7 @@ test("runAgentTeam catalog reports active discovery sources and raw catalog path
 			},
 			library: { sources: ["project"], query: undefined, projectAgents: "deny" },
 			defaults: { model: undefined, thinking: undefined },
+			parentTools,
 			signal: undefined,
 			onUpdate: undefined,
 		},
@@ -314,6 +473,9 @@ test("runAgentTeam catalog reports active discovery sources and raw catalog path
 	assert.equal(result.content[0].text.includes("sk-model-evidence"), true);
 	assert.equal(result.details.catalog[0].filePath.includes("sk-file-evidence"), true);
 	assert.equal(result.details.catalog[0].tools?.some((tool) => tool.includes("sk-tool-evidence")), true);
+	assert.equal(result.content[0].text.includes("exa_fetch"), true);
+	assert.equal(result.content[0].text.includes("exa_search"), false);
+	assert.deepEqual(result.details.extensionTools.map((tool) => tool.name), ["exa_fetch"]);
 	await rm(root, { recursive: true, force: true });
 });
 

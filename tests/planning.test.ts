@@ -1,9 +1,42 @@
 import assert from "node:assert/strict";
+import { link, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { resolveRunPlan, validateActionShape, validatePreflightShape } from "../extensions/multiagent/src/planning.ts";
-import type { AgentConfig, AgentDiagnostic } from "../extensions/multiagent/src/types.ts";
+import type { AgentConfig, AgentDiagnostic, ExtensionSourceScope, ParentToolInventory } from "../extensions/multiagent/src/types.ts";
 
 const noDiagnostics: AgentDiagnostic[] = [];
+const extensionToolPolicy = { projectExtensions: "deny", localExtensions: "deny" } as const;
+
+async function makeToolInventory(scope: ExtensionSourceScope = "user", options: { source?: string; active?: boolean; cwdInside?: boolean; extraReserved?: string[] } = {}) {
+	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-tools-"));
+	const cwd = join(root, "workspace");
+	const extensionDir = options.cwdInside === true ? cwd : join(root, "cache");
+	await mkdir(extensionDir, { recursive: true });
+	const extensionPath = join(extensionDir, "exa-extension.ts");
+	await writeFile(extensionPath, "export default function extension() {}\n", "utf8");
+	const source = options.source ?? "npm:pi-exa-tools";
+	const inventory: ParentToolInventory = {
+		apiAvailable: true,
+		errorMessage: undefined,
+		tools: [
+			{
+				name: "exa_search",
+				description: "Search the web",
+				active: options.active ?? true,
+				sourceInfo: { path: extensionPath, source, scope, origin: "package", baseDir: undefined },
+			},
+			...(options.extraReserved ?? []).map((name) => ({
+				name,
+				description: "reserved",
+				active: true,
+				sourceInfo: { path: extensionPath, source, scope, origin: "package" as const, baseDir: undefined },
+			})),
+		],
+	};
+	return { root, cwd, extensionPath, inventory, source };
+}
 
 const reviewer: AgentConfig = {
 	name: "reviewer",
@@ -172,7 +205,86 @@ test("resolveRunPlan rejects syntactically valid unavailable tools", () => {
 		[],
 		noDiagnostics,
 	);
-	assert.equal(plan.diagnostics.some((item) => item.code === "agent-tool-invalid" && item.message.includes("read, grep, find, ls, bash, edit, and write")), true);
+	assert.equal(plan.diagnostics.some((item) => item.code === "agent-tool-invalid" && item.message.includes("Extension tools such as exa_search must use extensionTools[]")), true);
+});
+
+test("resolveRunPlan accepts source-qualified active extension tools", async () => {
+	const fixture = await makeToolInventory();
+	try {
+		const plan = resolveRunPlan(
+			{
+				action: "run",
+				objective: "web research",
+				agents: [{ id: "searcher", kind: "inline", system: "Search.", extensionTools: [{ name: "exa_search", from: { source: fixture.source, scope: "user", origin: "package" } }] }],
+				steps: [{ id: "search", agent: "searcher", task: "Search." }],
+			},
+			[],
+			noDiagnostics,
+			{ parentTools: fixture.inventory, extensionToolPolicy, cwd: fixture.cwd },
+		);
+		assert.equal(plan.diagnostics.some((item) => item.severity === "error"), false);
+		const agent = plan.agents.find((candidate) => candidate.id === "searcher");
+		assert.deepEqual(agent?.tools, []);
+		assert.equal(agent?.extensionTools[0]?.name, "exa_search");
+		assert.equal(agent?.extensionTools[0]?.source.source, fixture.source);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("resolveRunPlan denies unsafe extension tool grants", async () => {
+	const active = await makeToolInventory();
+	const inactive = await makeToolInventory("user", { active: false });
+	const project = await makeToolInventory("project");
+	const local = await makeToolInventory("user", { cwdInside: true });
+	const sdk = await makeToolInventory("user", { source: "sdk" });
+	const collision = await makeToolInventory("user", { extraReserved: ["read"] });
+	const duplicate = await makeToolInventory();
+	const hardlink = await makeToolInventory();
+	const large = await makeToolInventory();
+	const hardlinkPath = join(hardlink.root, "cache", "agent-team-hardlink.ts");
+	await link(hardlink.extensionPath, hardlinkPath);
+	await writeFile(large.extensionPath, Buffer.alloc(4 * 1024 * 1024 + 1));
+	try {
+		const duplicateInventory = { ...active.inventory, tools: [...active.inventory.tools, ...duplicate.inventory.tools] };
+		const hardlinkInventory = {
+			...hardlink.inventory,
+			tools: [
+				...hardlink.inventory.tools,
+				{ name: "agent_team", description: "recursive", active: true, sourceInfo: { path: hardlinkPath, source: "local-hardlink", scope: "user" as const, origin: "top-level" as const, baseDir: undefined } },
+			],
+		};
+		const cases = [
+			{ name: "missing", fixture: active, grant: { name: "exa_fetch", from: { source: active.source, scope: "user", origin: "package" } }, code: "extension-tool-unavailable" },
+			{ name: "inactive", fixture: inactive, grant: { name: "exa_search", from: { source: inactive.source, scope: "user", origin: "package" } }, code: "extension-tool-inactive" },
+			{ name: "mismatch", fixture: active, grant: { name: "exa_search", from: { source: "npm:other", scope: "user", origin: "package" } }, code: "extension-tool-source-mismatch" },
+			{ name: "project", fixture: project, grant: { name: "exa_search", from: { source: project.source, scope: "project", origin: "package" } }, code: "extension-tool-project-denied" },
+			{ name: "local", fixture: local, grant: { name: "exa_search", from: { source: local.source, scope: "user", origin: "package" } }, code: "extension-tool-local-denied" },
+			{ name: "sdk", fixture: sdk, grant: { name: "exa_search", from: { source: sdk.source, scope: "user", origin: "package" } }, code: "extension-tool-sdk-unloadable" },
+			{ name: "collision", fixture: collision, grant: { name: "exa_search", from: { source: collision.source, scope: "user", origin: "package" } }, code: "extension-tool-builtin-collision" },
+			{ name: "hardlink", fixture: { ...hardlink, inventory: hardlinkInventory }, grant: { name: "exa_search", from: { source: hardlink.source, scope: "user", origin: "package" } }, code: "extension-tool-recursion-denied" },
+			{ name: "large", fixture: large, grant: { name: "exa_search", from: { source: large.source, scope: "user", origin: "package" } }, code: "extension-tool-source-unloadable" },
+			{ name: "ambiguous", fixture: { ...active, inventory: duplicateInventory }, grant: { name: "exa_search", from: { source: active.source, scope: "user", origin: "package" } }, code: "extension-tool-active-ambiguous" },
+			{ name: "reserved-builtin", fixture: active, grant: { name: "read", from: { source: active.source, scope: "user", origin: "package" } }, code: "extension-tool-reserved" },
+			{ name: "reserved", fixture: active, grant: { name: "agent_team", from: { source: active.source, scope: "user", origin: "package" } }, code: "extension-tool-reserved" },
+		];
+		for (const item of cases) {
+			const plan = resolveRunPlan(
+				{
+					action: "run",
+					objective: item.name,
+					agents: [{ id: "searcher", kind: "inline", system: "Search.", extensionTools: [item.grant] }],
+					steps: [{ id: "search", agent: "searcher", task: "Search." }],
+				},
+				[],
+				noDiagnostics,
+				{ parentTools: item.fixture.inventory, extensionToolPolicy, cwd: item.fixture.cwd },
+			);
+			assert.equal(plan.diagnostics.some((diagnostic) => diagnostic.code === item.code), true, item.name);
+		}
+	} finally {
+		await Promise.all([active, inactive, project, local, sdk, collision, duplicate, hardlink, large].map((fixture) => rm(fixture.root, { recursive: true, force: true })));
+	}
 });
 
 test("resolveRunPlan rejects malformed invocation-local agent bindings", () => {

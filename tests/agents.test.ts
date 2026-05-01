@@ -71,6 +71,16 @@ test("discoverAgents rejects unavailable library-declared tools", async () => {
 	await rm(root, { recursive: true, force: true });
 });
 
+test("discoverAgents rejects library self-declared extension tool grants", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-extension-tools-frontmatter-"));
+	const packageDir = join(root, "package-agents");
+	await makeAgent(packageDir, "web.md", "---\nname: web\ndescription: web agent\nextensionTools: exa_search\n---\nNope");
+	const discovery = discoverAgents({ cwd: root, packageAgentsDir: packageDir, library: normalizeLibraryOptions({ sources: ["package"] }) });
+	assert.equal(discovery.agents.length, 0);
+	assert.equal(discovery.diagnostics.some((item) => item.code === "agent-extension-tools-denied"), true);
+	await rm(root, { recursive: true, force: true });
+});
+
 test("discoverAgents reports duplicate source refs only", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-duplicate-refs-"));
 	const packageDir = join(root, "package-agents");

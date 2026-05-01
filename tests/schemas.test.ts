@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Compile } from "typebox/compile";
 import { AgentTeamSchema } from "../extensions/multiagent/src/schemas.ts";
 import { MAX_MODEL_FIELD_CHARS, MAX_PATH_FIELD_CHARS, MAX_SHORT_TEXT_FIELD_CHARS, MAX_TEXT_FIELD_CHARS } from "../extensions/multiagent/src/types.ts";
 
@@ -47,4 +48,16 @@ test("AgentTeamSchema retires caller-selected upstream handoff policy", () => {
 	const synthesis = AgentTeamSchema.properties.synthesis.properties;
 	assert.equal(Object.prototype.hasOwnProperty.call(step, "upstream"), false);
 	assert.equal(Object.prototype.hasOwnProperty.call(synthesis, "upstream"), false);
+});
+
+test("AgentTeamSchema separates built-in tools from extension tool grants", () => {
+	const validate = Compile(AgentTeamSchema);
+	const builtIn = { action: "run", objective: "ok", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	const retiredShape = { action: "run", objective: "bad", agents: [{ id: "searcher", kind: "inline", system: "x", tools: ["exa_search"] }], steps: [{ id: "s", agent: "searcher", task: "x" }] };
+	const extensionGrant = { action: "run", objective: "ok", agents: [{ id: "searcher", kind: "inline", system: "x", extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }] }], steps: [{ id: "s", agent: "searcher", task: "x" }] };
+	const extraProperty = { action: "run", objective: "bad", agents: [{ id: "searcher", kind: "inline", system: "x", extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", path: "/tmp/extension.ts" } }] }], steps: [{ id: "s", agent: "searcher", task: "x" }] };
+	assert.equal(validate.Check(builtIn), true);
+	assert.equal(validate.Check(retiredShape), false);
+	assert.equal(validate.Check(extensionGrant), true);
+	assert.equal(validate.Check(extraProperty), false);
 });

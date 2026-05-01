@@ -25,6 +25,14 @@ export const PUBLIC_ID_PATTERN = "^[a-z][a-z0-9-]{0,62}$";
 export const SOURCE_QUALIFIED_LIBRARY_REF_PATTERN = "^(package|user|project):[a-z][a-z0-9-]{0,62}$";
 export const AGENT_REFERENCE_PATTERN = `(${SOURCE_QUALIFIED_LIBRARY_REF_PATTERN})|${PUBLIC_ID_PATTERN}`;
 export const TOOL_NAME_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
+export const BUILTIN_CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const;
+export const EXTENSION_SOURCE_SCOPE_VALUES = ["user", "project", "temporary"] as const;
+export const EXTENSION_SOURCE_ORIGIN_VALUES = ["package", "top-level"] as const;
+
+export type BuiltinChildToolName = (typeof BUILTIN_CHILD_TOOL_NAMES)[number];
+export type ExtensionSourceScope = (typeof EXTENSION_SOURCE_SCOPE_VALUES)[number];
+export type ExtensionSourceOrigin = (typeof EXTENSION_SOURCE_ORIGIN_VALUES)[number];
+export type ExtensionToolTrustPolicy = "deny" | "confirm" | "allow";
 
 export const MAX_INVOCATION_AGENTS = 16;
 export const MAX_STEPS = 16;
@@ -78,6 +86,63 @@ export interface AgentDiscoveryResult {
 	projectAgents: ProjectAgentsPolicy;
 }
 
+export interface ExtensionToolProvenanceSpec {
+	source: string;
+	scope: ExtensionSourceScope | undefined;
+	origin: ExtensionSourceOrigin | undefined;
+}
+
+export interface ExtensionToolGrantSpec {
+	name: string;
+	from: ExtensionToolProvenanceSpec;
+}
+
+export interface ExtensionToolPolicy {
+	projectExtensions: ExtensionToolTrustPolicy;
+	localExtensions: ExtensionToolTrustPolicy;
+}
+
+export interface ParentToolSourceInfo {
+	path: string;
+	source: string;
+	scope: ExtensionSourceScope;
+	origin: ExtensionSourceOrigin;
+	baseDir: string | undefined;
+}
+
+export interface ParentToolInfo {
+	name: string;
+	description: string | undefined;
+	sourceInfo: ParentToolSourceInfo;
+	active: boolean;
+}
+
+export interface ParentToolInventory {
+	apiAvailable: boolean;
+	errorMessage: string | undefined;
+	tools: ParentToolInfo[];
+}
+
+export interface ResolvedExtensionSource {
+	path: string;
+	realpath: string;
+	source: string;
+	scope: ExtensionSourceScope;
+	origin: ExtensionSourceOrigin;
+	baseDir: string | undefined;
+	dev: number;
+	ino: number;
+	size: number;
+	mtimeMs: number;
+	sha256: string | undefined;
+}
+
+export interface ResolvedExtensionToolGrant {
+	name: string;
+	description: string | undefined;
+	source: ResolvedExtensionSource;
+}
+
 export interface InvocationAgentSpec {
 	id: string;
 	kind: InvocationAgentKind;
@@ -85,6 +150,7 @@ export interface InvocationAgentSpec {
 	description: string | undefined;
 	system: string | undefined;
 	tools: string[] | undefined;
+	extensionTools: ExtensionToolGrantSpec[] | undefined;
 	model: string | undefined;
 	thinking: ThinkingLevel | undefined;
 	cwd: string | undefined;
@@ -98,6 +164,7 @@ export interface ResolvedAgent {
 	kind: InvocationAgentKind;
 	description: string;
 	tools: string[];
+	extensionTools: ResolvedExtensionToolGrant[];
 	model: string | undefined;
 	thinking: ThinkingLevel | undefined;
 	systemPrompt: string;
@@ -218,6 +285,19 @@ export interface CatalogAgentSummary {
 	sha256: string;
 }
 
+export interface CatalogExtensionToolSummary {
+	name: string;
+	description: string | undefined;
+	from: ExtensionToolProvenanceSpec;
+	active: boolean;
+}
+
+export interface PublicExtensionToolGrant {
+	name: string;
+	description: string | undefined;
+	from: ResolvedExtensionSource;
+}
+
 export interface PublicResolvedAgent {
 	id: string;
 	ref: string;
@@ -225,6 +305,7 @@ export interface PublicResolvedAgent {
 	kind: InvocationAgentKind;
 	description: string;
 	tools: string[];
+	extensionTools: PublicExtensionToolGrant[];
 	model: string | undefined;
 	thinking: ThinkingLevel | undefined;
 	source: AgentSource;
@@ -240,6 +321,7 @@ export interface AgentTeamDetails {
 	objective: string | undefined;
 	library: LibraryOptions;
 	catalog: CatalogAgentSummary[];
+	extensionTools: CatalogExtensionToolSummary[];
 	agents: PublicResolvedAgent[];
 	steps: AgentRunResult[];
 	diagnostics: AgentDiagnostic[];

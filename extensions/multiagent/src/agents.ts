@@ -78,6 +78,15 @@ function readAgentFile(filePath: string, source: Exclude<LibrarySource, never>, 
 		diagnostics.push({ code: "agent-name-invalid", path: filePath, message: `Invalid agent name: ${name}`, severity: "warning" });
 		return undefined;
 	}
+	if (parsed.frontmatter.extensionTools !== undefined) {
+		diagnostics.push({
+			code: "agent-extension-tools-denied",
+			path: filePath,
+			message: `Library agent ${source}:${name} cannot self-declare extensionTools; bind extension grants in the agent_team invocation.`,
+			severity: "warning",
+		});
+		return undefined;
+	}
 	const thinking = parsed.frontmatter.thinking;
 	if (thinking && !VALID_THINKING.has(thinking)) {
 		diagnostics.push({

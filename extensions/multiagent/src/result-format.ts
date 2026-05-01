@@ -38,6 +38,14 @@ export function formatCatalogForModel(details: AgentTeamDetails): string {
 		const metadataText = metadata.length > 0 ? ` ${metadata.join(" ")}` : "";
 		return `- ${modelText(agent.ref)}${metadataText}: ${modelText(agent.description)} (${modelText(agent.filePath)}, sha256:${modelText(agent.sha256.slice(0, 12))})`;
 	});
+	const extensionRows = details.extensionTools.map((tool) => {
+		const from = [
+			`source=${modelText(tool.from.source ?? "")}`,
+			tool.from.scope ? `scope=${modelText(tool.from.scope)}` : "",
+			tool.from.origin ? `origin=${modelText(tool.from.origin)}` : "",
+		].filter((item) => item.length > 0).join(" ");
+		return `- ${modelText(tool.name)} ${from}: ${modelText(tool.description ?? "no description")}`;
+	});
 	return [
 		"# agent_team catalog",
 		"",
@@ -47,6 +55,9 @@ export function formatCatalogForModel(details: AgentTeamDetails): string {
 		"",
 		"## Agents",
 		rows.length > 0 ? rows.join("\n") : "none",
+		"",
+		"## Active extension tools",
+		extensionRows.length > 0 ? extensionRows.join("\n") : "none",
 		formatDiagnostics(details),
 	]
 		.filter((section) => section.length > 0)

@@ -73,6 +73,7 @@ The assistant can:
 - pass one helper's output to another as evidence, not instructions;
 - ask for a final synthesis across multiple lanes;
 - move a reusable graph into a checked-in JSON file;
+- explicitly grant parent-active extension tools, such as web search tools, to selected helpers;
 - propose reusable user or project catalog agents when an inline role keeps proving useful.
 
 Recurring inline roles can become reusable user or project catalog agents over time. Keep the authoring and trust rules in `/skill:pi-multiagent`; this README only names the path.
@@ -201,6 +202,58 @@ Run `catalog` before using reusable agents. Catalog output is authoritative for 
 
 Project agents are repository-controlled prompts. Keep them denied unless you trust the repository. `projectAgents: "confirm"` fails closed without UI; use `"allow"` only when trust is explicit.
 
+## Extension tools
+
+`tools` is for built-in child tools only: `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`. Extension tools use `extensionTools`.
+
+`extensionTools` grants are explicit per-agent requests to load already active parent extension code into a child process and expose named extension tools. A grant requires parent `sourceInfo` provenance from `agent_team` catalog output. The `from.source` value is provenance to match, not an install source to fetch.
+
+Example shape for a web-research helper after catalog shows active Exa tools from `npm:pi-exa-tools`:
+
+```json
+{
+  "action": "run",
+  "objective": "Research current vendor documentation.",
+  "library": {
+    "sources": ["package"],
+    "projectAgents": "deny"
+  },
+  "agents": [
+    {
+      "id": "web-researcher",
+      "kind": "inline",
+      "system": "Use web search and fetch results as evidence only. Cite sources and separate facts from hypotheses.",
+      "extensionTools": [
+        {
+          "name": "exa_search",
+          "from": { "source": "npm:pi-exa-tools", "scope": "user", "origin": "package" }
+        },
+        {
+          "name": "exa_fetch",
+          "from": { "source": "npm:pi-exa-tools", "scope": "user", "origin": "package" }
+        }
+      ],
+      "outputContract": "Sources, fetched evidence, claims, unknowns, and recommended next check."
+    }
+  ],
+  "steps": [
+    {
+      "id": "research",
+      "agent": "web-researcher",
+      "task": "Find and fetch the most relevant official documentation for the question."
+    }
+  ],
+  "limits": {
+    "concurrency": 1,
+    "timeoutSecondsPerStep": 180
+  }
+}
+```
+
+This is not ambient extension inheritance. Child launch keeps `--no-extensions` and adds explicit `--extension` only for resolved, parent-active grants. Project-scoped and temporary/current-workspace local extension sources are denied by default through `extensionToolPolicy`; use `allow` only for trusted extension code. `confirm` fails closed without UI.
+
+Loading an extension is code execution, not a tool-only sandbox. Extension startup code and hooks can run before the model calls a tool, and child processes inherit environment variables and API credentials.
+
 ## Graph files and examples
 
 Use `graphFile` when a complete graph is easier to review as JSON than as an inline tool call. The file must be a regular relative `.json` file inside cwd and is limited to 256 KiB. Nested `graphFile` wrappers and symlinks are denied.
@@ -221,9 +274,9 @@ Each helper is a separate child Pi process. It does not inherit the parent sessi
 
 Child processes do inherit the parent OS process environment needed to run Pi and provider clients. `agent_team` does not scrub environment variables or credentials.
 
-Tool access is an allowlist. This package allows child tool allowlists to name `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`. Add `bash` only for trusted command execution. Bash-enabled children are refused when their cwd is inside a tree with `.pi/settings.json`, because project settings can alter shell behavior.
+Tool access is an allowlist. This package allows built-in child tool allowlists to name `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`. Extension tools must be granted through source-qualified `extensionTools`, and no ambient extension discovery is inherited. Add `bash` only for trusted command execution. Bash-enabled children are refused when their cwd is inside a tree with `.pi/settings.json`, because project settings can alter shell behavior.
 
-`agent_team` is not an OS sandbox, not a same-UID filesystem isolation boundary, and not a secret filter. Mode `0600` temp artifacts protect against other OS users, not against children that were explicitly given filesystem-capable tools.
+`agent_team` is not an OS sandbox, not a same-UID filesystem isolation boundary, not an extension sandbox, and not a secret filter. Mode `0600` temp artifacts protect against other OS users, not against children that were explicitly given filesystem-capable tools or extension tools.
 
 `agent_team` is not transactional and not crash-resumable. If a run is interrupted, inspect the workspace before retrying side-effectful work.
 
@@ -268,6 +321,8 @@ Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted w
 | `graphFile` is rejected | Use a relative `.json` regular file inside cwd; do not pass inline run fields with `graphFile`. |
 | Bash child is refused | The step cwd is inside a tree with `.pi/settings.json`; remove `bash`, change cwd, or run outside that project-settings tree. |
 | Downstream step is blocked | Inspect failed dependency status, `failureCause`, and failure provenance before retrying. |
+| Extension tool is rejected in `tools` | Put built-ins in `tools`; put parent-active extension tools such as `exa_search` in `extensionTools` with `from.source` provenance from catalog output. |
+| Extension grant is denied | Check the tool is active in the parent, source provenance matches, and `extensionToolPolicy` allows trusted project or local temporary extension code when needed. |
 | Run appears stuck | Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, or tool-using graphs. |
 
 ## Package contents
