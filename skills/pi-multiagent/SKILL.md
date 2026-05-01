@@ -22,7 +22,7 @@ When the user asks to edit or improve this package, use this skill as the agent-
 2. Prefer inline agents for novel or one-off specialists. Use source-qualified library refs such as `package:reviewer` only after confirming the role in catalog output.
 3. Keep project agents and project/local extension sources denied unless the repository or local extension code is trusted and approval is explicit.
 4. Give every step a concrete `task`; use `outputContract` for severity, paths, validation evidence, or result shape.
-5. Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, or other tool-using runs.
+5. `limits.timeoutSecondsPerStep` defaults to 7200 seconds. Raise it for broad, untrusted, implementation, bash-using, release, or other tool-using runs rather than setting short values.
 6. Serialize write-capable or side-effectful steps with `needs` or `limits.concurrency: 1` unless ownership is disjoint.
 7. Use the graph cookbook when the task needs reusable choreography. Use `graphFile` only when the complete graph is easier to review as JSON than as inline tool arguments.
 8. When changing `pi-multiagent` itself, keep README, skill text, examples, tests, and package metadata synchronized; run `pnpm run gate`, `npm pack --dry-run --json`, and `git diff --check` before delivery.
@@ -118,7 +118,7 @@ Before granting extension tools, run catalog and copy the active tool provenance
 
 `from.source` matches parent `sourceInfo.source`; it is provenance, not an install source. The child still launches with `--no-extensions` plus explicit `--extension` for resolved sources. Project-scoped and temporary/current-workspace local extension sources are denied by default through `extensionToolPolicy`; `confirm` fails closed without UI.
 
-Treat `extensionTools` as permission to execute trusted extension code, not as a narrow tool-only sandbox. Extension startup code and hooks can run before any tool call, child processes inherit environment variables and API credentials, and multiple children can multiply network/API costs. Use timeouts and serialize rate-limited or side-effectful web lanes.
+Treat `extensionTools` as permission to execute trusted extension code, not as a narrow tool-only sandbox. Extension startup code and hooks can run before any tool call, child processes inherit environment variables and API credentials, and multiple children can multiply network/API costs. Use the 7200-second default timeout or raise it, and serialize rate-limited or side-effectful web lanes.
 
 ## Graph rules
 
@@ -127,7 +127,7 @@ Treat `extensionTools` as permission to execute trusted extension code, not as a
 3. Built-in child tools go in `tools`; parent-active extension tools go in source-qualified `extensionTools`. Do not place extension tool names in `tools`.
 4. Use `package:worker` only when edits are in scope. Do not run multiple write-capable agents over overlapping files.
 5. Do not set `upstream` policies; `preview`, `full`, `file-ref`, and `maxChars` handoff knobs are retired. Runtime copies upstream output inline through 100000 chars and uses file refs above that.
-6. Use `synthesis.allowPartial: true` only when final triage should still report a decision after one lane fails, blocks, or times out.
+6. Use `synthesis.allowPartial: true` only when final triage should still report a decision after one lane fails, blocks, or times out; do not shorten timeouts to manufacture partial synthesis.
 7. Read parent failure fields and provenance before trusting child-authored error text.
 8. Use `graphFile` only as a run wrapper around a complete relative `.json` graph in the current workspace; package examples must be copied/adapted before use.
 9. Child Pi processes inherit the parent OS process environment needed to run Pi/provider clients; `agent_team` does not scrub environment variables or credentials. Do not grant `bash` or extension tools to untrusted children.
@@ -159,7 +159,7 @@ Treat `extensionTools` as permission to execute trusted extension code, not as a
     "task": "Summarize the verified facts and next action."
   },
   "limits": {
-    "timeoutSecondsPerStep": 600
+    "timeoutSecondsPerStep": 9000
   }
 }
 ```

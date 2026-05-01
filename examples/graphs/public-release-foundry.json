@@ -148,6 +148,6 @@
   },
   "limits": {
     "concurrency": 5,
-    "timeoutSecondsPerStep": 900
+    "timeoutSecondsPerStep": 9000
   }
 }

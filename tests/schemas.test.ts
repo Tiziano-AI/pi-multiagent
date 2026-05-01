@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Compile } from "typebox/compile";
+import { normalizeLimits } from "../extensions/multiagent/src/limits.ts";
 import { AgentTeamSchema } from "../extensions/multiagent/src/schemas.ts";
-import { MAX_MODEL_FIELD_CHARS, MAX_PATH_FIELD_CHARS, MAX_SHORT_TEXT_FIELD_CHARS, MAX_TEXT_FIELD_CHARS } from "../extensions/multiagent/src/types.ts";
+import {
+	DEFAULT_TIMEOUT_SECONDS_PER_STEP,
+	MAX_CONCURRENCY,
+	MAX_MODEL_FIELD_CHARS,
+	MAX_PATH_FIELD_CHARS,
+	MAX_SHORT_TEXT_FIELD_CHARS,
+	MAX_TEXT_FIELD_CHARS,
+	MAX_TIMEOUT_SECONDS_PER_STEP,
+} from "../extensions/multiagent/src/types.ts";
 
 function acceptsLength(schema: { minLength?: number; maxLength?: number }, length: number): boolean {
 	const min = schema.minLength ?? 0;
@@ -41,6 +50,22 @@ test("AgentTeamSchema bounds caller text field lengths", () => {
 	assert.equal(acceptsLength(agent.cwd, MAX_PATH_FIELD_CHARS + 1), false);
 	assert.equal(acceptsLength(library.query, MAX_SHORT_TEXT_FIELD_CHARS), true);
 	assert.equal(acceptsLength(library.query, MAX_SHORT_TEXT_FIELD_CHARS + 1), false);
+});
+
+test("AgentTeamSchema documents explicit per-step timeout default and bounds", () => {
+	const timeoutSecondsPerStep = AgentTeamSchema.properties.limits.properties.timeoutSecondsPerStep;
+	assert.equal(timeoutSecondsPerStep.minimum, 1);
+	assert.equal(timeoutSecondsPerStep.maximum, MAX_TIMEOUT_SECONDS_PER_STEP);
+	assert.equal(timeoutSecondsPerStep.default, DEFAULT_TIMEOUT_SECONDS_PER_STEP);
+});
+
+test("normalizeLimits applies the explicit per-step timeout default", () => {
+	const defaults = normalizeLimits({ action: "run", objective: "ok", steps: [{ id: "s", agent: "package:reviewer", task: "x" }] });
+	const override = normalizeLimits({ action: "run", objective: "ok", steps: [{ id: "s", agent: "package:reviewer", task: "x" }], limits: { concurrency: 1, timeoutSecondsPerStep: 9000 } });
+	assert.equal(defaults.concurrency, MAX_CONCURRENCY);
+	assert.equal(defaults.timeoutSecondsPerStep, DEFAULT_TIMEOUT_SECONDS_PER_STEP);
+	assert.equal(override.concurrency, 1);
+	assert.equal(override.timeoutSecondsPerStep, 9000);
 });
 
 test("AgentTeamSchema retires caller-selected upstream handoff policy", () => {

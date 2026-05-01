@@ -132,15 +132,13 @@ export async function spawnPiJson(options: {
 		};
 		if (options.signal?.aborted) onAbort();
 		else options.signal?.addEventListener("abort", onAbort, { once: true });
-		if (options.limits.timeoutSecondsPerStep !== undefined) {
-			timeoutTimer = setTimeout(() => {
-				if (firstCause || failureTerminating) return;
-				firstCause = "timeout";
-				appendDiagnostic(options.result, `Subagent exceeded limits.timeoutSecondsPerStep=${options.limits.timeoutSecondsPerStep}; terminating.`);
-				options.onPartial();
-				terminate();
-			}, options.limits.timeoutSecondsPerStep * 1000);
-		}
+		timeoutTimer = setTimeout(() => {
+			if (firstCause || failureTerminating) return;
+			firstCause = "timeout";
+			appendDiagnostic(options.result, `Subagent exceeded limits.timeoutSecondsPerStep=${options.limits.timeoutSecondsPerStep}; terminating.`);
+			options.onPartial();
+			terminate();
+		}, options.limits.timeoutSecondsPerStep * 1000);
 		child.stdin.on("error", (error) => {
 			if (settled || firstCause) return;
 			failureTerminating = true;

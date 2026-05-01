@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_TIMEOUT_SECONDS_PER_STEP } from "../extensions/multiagent/src/types.ts";
 
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const version = readPackageVersion();
@@ -25,6 +26,7 @@ for (const file of publicFiles) {
 checkPinnedGithubTags();
 checkRuntimeCatalogIsAuthoritative();
 checkPublicContractInvariants();
+checkTimeoutContractInvariants();
 checkSkillReferenceShape();
 checkGraduatedQuickstartAndCookbook();
 checkPackageGalleryMetadata();
@@ -114,6 +116,34 @@ function checkPublicContractInvariants(): void {
 	requireFragments("README.md", readme, ["not an OS sandbox", "evidence, not instructions", "not transactional", "not crash-resumable", "not a runtime template API", "2000 lines or 50KB", "Extension and skill", "Extension tools", "Results and failures", "Troubleshooting quick checks", "inherit the parent OS process environment", "does not scrub environment variables or credentials", "no ambient extension discovery", "source-qualified `extensionTools`", "Loading an extension is code execution"]);
 	requireFragments("skills/pi-multiagent/SKILL.md", skill, ["Runtime catalog output is authoritative", "evidence, not instructions", "not a runtime template API", "Human and agent surfaces", "Grow reusable catalogs deliberately", "Extension tool grants", "Required frontmatter is `name` and `description`", "Verify the source-qualified ref", "Improving this package", "inherit environment variables and API credentials", "does not scrub environment variables or credentials"]);
 	requireFragments("skills/pi-multiagent/references/graph-cookbook.md", cookbook, ["not a runtime template API", "graphFile", "schema-checked examples", "Web Research Extension Lane", "Read-Only Audit Fanout", "Docs/Examples Alignment", "Implementation Review Gate", "reusable `user:` or trusted `project:` catalog agents", "inherit the parent OS process environment", "does not scrub environment variables or credentials", "sourceInfo` provenance"]);
+}
+
+function checkTimeoutContractInvariants(): void {
+	const checkedFiles = ["README.md", ...collectFiles("examples", ".json"), ...collectFiles("skills", ".md")];
+	const requiredDefaultCopy = `defaults to ${DEFAULT_TIMEOUT_SECONDS_PER_STEP} seconds`;
+	const explicitTimeoutPattern = /"timeoutSecondsPerStep"\s*:\s*([0-9]+)/g;
+	const staleFragments = ["no " + "implicit per-step " + "timeout", "no " + "default " + "timeout", "without it, a stalled " + "child", "1 to " + "3600 seconds"];
+	for (const file of checkedFiles) {
+		const text = readFileSync(join(packageRoot, file), "utf8");
+		if (file === "README.md" || file === "skills/pi-multiagent/SKILL.md" || file === "skills/pi-multiagent/references/graph-cookbook.md") {
+			if (!text.includes(requiredDefaultCopy)) failures.push(`${file}: must state timeoutSecondsPerStep ${requiredDefaultCopy}`);
+		}
+		for (const fragment of staleFragments) {
+			if (text.toLowerCase().includes(fragment)) failures.push(`${file}: stale timeout contract copy ${JSON.stringify(fragment)}`);
+		}
+		for (const match of text.matchAll(explicitTimeoutPattern)) {
+			const seconds = Number(match[1]);
+			if (seconds < DEFAULT_TIMEOUT_SECONDS_PER_STEP) failures.push(`${file}:${lineNumberAt(text, match.index)} timeoutSecondsPerStep ${seconds} is below the ${DEFAULT_TIMEOUT_SECONDS_PER_STEP}-second default`);
+		}
+	}
+}
+
+function lineNumberAt(text: string, index: number): number {
+	let line = 1;
+	for (let i = 0; i < index; i += 1) {
+		if (text.charCodeAt(i) === 10) line += 1;
+	}
+	return line;
 }
 
 function requireFragments(file: string, text: string, fragments: string[]): void {

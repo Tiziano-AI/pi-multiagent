@@ -39,7 +39,7 @@ export default function multiagentExtension(pi: ExtensionAPI) {
 			"Use source-qualified library refs such as package:reviewer. Bare library names are invalid.",
 			"Library sources are package bundled prompts, user prompts from ~/.pi/agent/agents or PI_CODING_AGENT_DIR/agents, and explicit trusted project .pi/agents.",
 			"Serialize write-capable or side-effectful steps with needs edges or limits.concurrency: 1 unless ownership is disjoint.",
-			"Set limits.timeoutSecondsPerStep for broad review, implementation, untrusted, or tool-using runs. There is no default timeout.",
+			"limits.timeoutSecondsPerStep defaults to 7200 seconds. Raise it for broad review, implementation, untrusted, release, bash-using, or other tool-using runs rather than setting short values.",
 			"Keep built-ins in tools. Put extension tools such as exa_search in source-qualified extensionTools after catalog shows parent sourceInfo provenance.",
 			"Project and local temporary extension sources are denied by default; extensionTools load trusted extension code and are not a sandbox.",
 			"Upstream output is automatic: inline up to 100000 chars per step; larger outputs are saved as file refs and the receiver is launched with read.",

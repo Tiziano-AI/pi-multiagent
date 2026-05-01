@@ -23,8 +23,8 @@ import type {
 	TeamLimits,
 	TeamStepSpec,
 } from "./types.ts";
-import { MAX_CONCURRENCY } from "./types.ts";
 import { appendDiagnostic, createRunResult, finishRunStatus, isFailedResult, isTerminalResult, noteFailureCause } from "./json-events.ts";
+import { normalizeLimits } from "./limits.ts";
 import { prepareAutomaticHandoff } from "./handoff.ts";
 import { catalogParentExtensionTools, normalizeExtensionToolPolicy, verifyResolvedExtensionSources } from "./tool-policy.ts";
 import { persistFullStepOutputs, writeTempMarkdown } from "./output-files.ts";
@@ -393,13 +393,6 @@ function buildDelegatedTask(objective: string, step: TeamStepSpec, agent: Resolv
 	]
 		.filter((section) => section.length > 0)
 		.join("\n\n");
-}
-
-function normalizeLimits(input: AgentTeamInput): TeamLimits {
-	return {
-		concurrency: Math.max(1, Math.min(Math.floor(input.limits?.concurrency ?? MAX_CONCURRENCY), MAX_CONCURRENCY)),
-		timeoutSecondsPerStep: input.limits?.timeoutSecondsPerStep,
-	};
 }
 
 function resolveTaskCwd(defaultCwd: string, taskCwd: string | undefined): string {

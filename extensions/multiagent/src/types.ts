@@ -38,6 +38,8 @@ export const MAX_INVOCATION_AGENTS = 16;
 export const MAX_STEPS = 16;
 export const MAX_DEPENDENCIES_PER_STEP = 12;
 export const MAX_CONCURRENCY = 6;
+export const DEFAULT_TIMEOUT_SECONDS_PER_STEP = 7200;
+export const MAX_TIMEOUT_SECONDS_PER_STEP = 36000;
 export const INLINE_HANDOFF_CHARS = 100000;
 export const OUTPUT_INLINE_CHARS = INLINE_HANDOFF_CHARS;
 export const MAX_STDOUT_LINE_CHARS = 1000000;
@@ -197,7 +199,7 @@ export interface TeamSynthesisSpec {
 
 export interface TeamLimits {
 	concurrency: number;
-	timeoutSecondsPerStep: number | undefined;
+	timeoutSecondsPerStep: number;
 }
 
 export interface UsageStats {

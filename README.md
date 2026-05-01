@@ -121,7 +121,7 @@ Start small. These examples use only bundled package agents and deny project age
     }
   ],
   "limits": {
-    "timeoutSecondsPerStep": 600
+    "timeoutSecondsPerStep": 9000
   }
 }
 ```
@@ -170,7 +170,7 @@ Start small. These examples use only bundled package agents and deny project age
     "allowPartial": true
   },
   "limits": {
-    "timeoutSecondsPerStep": 600
+    "timeoutSecondsPerStep": 9000
   }
 }
 ```
@@ -245,7 +245,7 @@ Example shape for a web-research helper after catalog shows active Exa tools fro
   ],
   "limits": {
     "concurrency": 1,
-    "timeoutSecondsPerStep": 180
+    "timeoutSecondsPerStep": 9000
   }
 }
 ```
@@ -301,7 +301,7 @@ The model-facing aggregate output is capped at 2000 lines or 50KB. When possible
 | Dependencies per normal step | 12 |
 | Synthesis fan-in | 16 |
 | Concurrency | 1 to 6; default 6 |
-| Per-step timeout | 1 to 3600 seconds; optional; no default |
+| Per-step timeout | 1 to 36000 seconds; default 7200 seconds |
 | Inline upstream handoff | 100000 chars per upstream step; larger output uses a mode `0600` file artifact |
 | Model-facing aggregate output | 2000 lines or 50KB; the full aggregate is written to a temp file when possible |
 | Graph file input | Relative `.json` file inside cwd; 256 KiB max |
@@ -309,7 +309,7 @@ The model-facing aggregate output is capped at 2000 lines or 50KB. When possible
 | Per-event preview | 2000 chars |
 | JSON stdout line buffer | 1000000 chars |
 
-Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted work, bash-using work, or other tool-using runs.
+`limits.timeoutSecondsPerStep` defaults to 7200 seconds. Raise it for broad review, implementation, untrusted work, bash-using work, release work, or other tool-using runs rather than setting short values.
 
 ## Troubleshooting quick checks
 
@@ -323,7 +323,7 @@ Set `limits.timeoutSecondsPerStep` for broad review, implementation, untrusted w
 | Downstream step is blocked | Inspect failed dependency status, `failureCause`, and failure provenance before retrying. |
 | Extension tool is rejected in `tools` | Put built-ins in `tools`; put parent-active extension tools such as `exa_search` in `extensionTools` with `from.source` provenance from catalog output. |
 | Extension grant is denied | Check the tool is active in the parent, source provenance matches, and `extensionToolPolicy` allows trusted project or local temporary extension code when needed. |
-| Run appears stuck | Set `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, or tool-using graphs. |
+| Run appears stuck | The default per-step timeout is 7200 seconds; raise `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, release, or other tool-using graphs. |
 
 ## Package contents
 
