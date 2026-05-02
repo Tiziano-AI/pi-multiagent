@@ -28,8 +28,11 @@ tmp/
 .cache/
 *.tsbuildinfo
 
-# Package artifacts and logs
+# Package artifacts, lockfiles, and logs
 *.tgz
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
 *.log
 npm-debug.log*
 pnpm-debug.log*

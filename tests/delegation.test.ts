@@ -92,6 +92,28 @@ function assistantErrorMessage(text: string): string {
 	})}\n`;
 }
 
+function terminalTurnEnd(input: { message?: Record<string, unknown>; toolResults?: unknown[] } = {}): string {
+	return `${JSON.stringify({
+		type: "turn_end",
+		message: input.message ?? {
+			role: "assistant",
+			content: [{ type: "text", text: "ok" }],
+			usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0 } },
+			model: "fake-model",
+			stopReason: "stop",
+		},
+		toolResults: input.toolResults ?? [],
+	})}\n`;
+}
+
+function agentEnd(): string {
+	return `${JSON.stringify({ type: "agent_end", messages: [] })}\n`;
+}
+
+function autoRetryEnd(success: boolean): string {
+	return `${JSON.stringify({ type: "auto_retry_end", success, attempt: 1 })}\n`;
+}
+
 function inlineOutput(result: AgentRunResult): string {
 	return result.assistantOutput.inlineText ?? "";
 }
@@ -548,6 +570,118 @@ test("runAgentTeam fails closed on stdin transport errors", async () => {
 	await rm(root, { recursive: true, force: true });
 });
 
+test("runAgentTeam accepts normal Pi lifecycle after terminal stop", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-lifecycle-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal lifecycle",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(terminalTurnEnd());
+					child.stdout.write(agentEnd());
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(result.details.steps[0].lateEventsIgnored, false);
+	assert.equal(result.details.steps[0].events.some((event) => event.preview.includes("Ignored child stdout after terminal assistant message_end")), false);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam fails closed on invalid post-terminal lifecycle", async () => {
+	const cases: { name: string; lines: string[]; reason: string }[] = [
+		{
+			name: "turn end error stop reason",
+			lines: [terminalTurnEnd({ message: { role: "assistant", content: [], stopReason: "error" } })],
+			reason: "turn_end stopReason is not stop",
+		},
+		{
+			name: "turn end aborted stop reason",
+			lines: [terminalTurnEnd({ message: { role: "assistant", content: [], stopReason: "aborted" } })],
+			reason: "turn_end stopReason is not stop",
+		},
+		{
+			name: "turn end missing message",
+			lines: [`${JSON.stringify({ type: "turn_end", toolResults: [] })}\n`],
+			reason: "turn_end missing assistant message",
+		},
+		{
+			name: "turn end assistant error",
+			lines: [terminalTurnEnd({ message: { role: "assistant", content: [], stopReason: "stop", errorMessage: "bad" } })],
+			reason: "turn_end message includes errorMessage",
+		},
+		{
+			name: "turn end tool results",
+			lines: [terminalTurnEnd({ toolResults: [{ role: "toolResult", toolCallId: "x", toolName: "x", content: [] }] })],
+			reason: "turn_end has post-terminal tool results",
+		},
+		{
+			name: "duplicate turn end",
+			lines: [terminalTurnEnd(), terminalTurnEnd()],
+			reason: "duplicate turn_end",
+		},
+		{
+			name: "agent end before turn end",
+			lines: [agentEnd()],
+			reason: "agent_end before turn_end",
+		},
+		{
+			name: "failed auto retry end",
+			lines: [autoRetryEnd(false)],
+			reason: "auto_retry_end did not report success",
+		},
+	];
+	for (const item of cases) {
+		const root = await mkdir(join(tmpdir(), `pi-multiagent-invalid-lifecycle-${Date.now()}-${item.name.replace(/\s+/g, "-")}`), { recursive: true });
+		const result = await runAgentTeam(
+			{
+				action: "run",
+				objective: item.name,
+				agents: [{ id: "worker", kind: "inline", system: "x" }],
+				steps: [{ id: "bad", agent: "worker", task: "x" }],
+			},
+			{
+				cwd: root,
+				discovery: discovery(root),
+				library,
+				defaults: { model: undefined, thinking: undefined },
+				signal: undefined,
+				onUpdate: undefined,
+				spawnProcess: () => {
+					const child = new FakeChild();
+					queueMicrotask(() => {
+						child.stdout.write(assistantMessage("ok"));
+						for (const line of item.lines) child.stdout.write(line);
+						child.close(0);
+					});
+					return child;
+				},
+			},
+		);
+		const step = result.details.steps[0];
+		assert.equal(step.status, "failed", item.name);
+		assert.equal(step.malformedStdout, true, item.name);
+		assert.equal(step.errorMessage?.includes(item.reason), true, item.name);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("runAgentTeam ignores late non-json stdout after terminal stop", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-stdout-${Date.now()}`), { recursive: true });
 	const result = await runAgentTeam(
@@ -903,7 +1037,9 @@ test("runAgentTeam allows child Pi auto-retry to recover from transient assistan
 					child.stdout.write(assistantErrorMessage("partial output from failed attempt"));
 					child.stdout.write(`${JSON.stringify({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "terminated" })}\n`);
 					child.stdout.write(assistantMessage("recovered output"));
-					child.stdout.write(`${JSON.stringify({ type: "auto_retry_end", success: true, attempt: 1 })}\n`);
+					child.stdout.write(autoRetryEnd(true));
+					child.stdout.write(terminalTurnEnd({ message: { role: "assistant", content: [{ type: "text", text: "recovered output" }], stopReason: "stop" } }));
+					child.stdout.write(agentEnd());
 					child.close(0);
 				});
 				return child;

@@ -3,7 +3,7 @@
 import { StringDecoder } from "node:string_decoder";
 import { appendDiagnostic, appendStderr, applyJsonEvent, markMalformedStdout, noteFailureCause, parseJsonRecordLine } from "./json-events.ts";
 import { buildPiArgs, getPiInvocation, type SpawnProcess } from "./child-launch.ts";
-import { MAX_STDOUT_LINE_CHARS } from "./types.ts";
+import { MAX_STDOUT_LINE_CHARS, isRecord } from "./types.ts";
 import type { AgentInvocationDefaults, AgentRunResult, ResolvedAgent, TeamLimits } from "./types.ts";
 
 const SIGKILL_CONFIRM_MS = 500;
@@ -43,6 +43,7 @@ export async function spawnPiJson(options: {
 		let failureTerminating = false;
 		const stdoutDecoder = new StringDecoder("utf8");
 		const stderrDecoder = new StringDecoder("utf8");
+		const postTerminalLifecycle = createPostTerminalLifecycleState();
 		const settle = (exitCode: number | undefined, exitSignal: string | undefined, closeout: string | undefined = undefined) => {
 			if (settled) return;
 			settled = true;
@@ -99,7 +100,8 @@ export async function spawnPiJson(options: {
 				while (terminalNewline !== -1) {
 					const line = buffer.slice(0, terminalNewline);
 					buffer = buffer.slice(terminalNewline + 1);
-					processJsonLine(line, options.result, options.onPartial);
+					processJsonLine(line, options.result, options.onPartial, postTerminalLifecycle);
+					if (settled || firstCause || terminateForProtocolFailure()) return;
 					terminalNewline = buffer.indexOf("\n");
 				}
 				if (buffer.length > MAX_STDOUT_LINE_CHARS) {
@@ -125,7 +127,7 @@ export async function spawnPiJson(options: {
 					terminateForProtocolFailure();
 					return;
 				}
-				processJsonLine(line, options.result, options.onPartial);
+				processJsonLine(line, options.result, options.onPartial, postTerminalLifecycle);
 				if (settled || firstCause || terminateForProtocolFailure()) return;
 				newline = buffer.indexOf("\n");
 			}
@@ -206,7 +208,7 @@ export async function spawnPiJson(options: {
 				processStdoutText(stdoutDecoder.end());
 				const stderrRest = stderrDecoder.end();
 				if (stderrRest.length > 0) appendStderr(options.result, stderrRest);
-				if (buffer.trim().length > 0) processJsonLine(buffer, options.result, options.onPartial);
+				if (buffer.trim().length > 0) processJsonLine(buffer, options.result, options.onPartial, postTerminalLifecycle);
 			}
 			settle(code ?? undefined, closeSignal ?? undefined);
 		});
@@ -216,6 +218,7 @@ export async function spawnPiJson(options: {
 function shouldTerminateForProtocolFailure(result: AgentRunResult): boolean {
 	if (result.errorMessage?.startsWith("Subagent assistant output artifact persistence failed:")) return true;
 	if (result.errorMessage?.startsWith("Subagent JSON stdout line exceeded")) return true;
+	if (result.errorMessage?.startsWith("Subagent emitted invalid post-terminal lifecycle event:")) return true;
 	if (result.errorMessage === "Subagent emitted malformed assistant message_end event.") return true;
 	if (result.malformedStdout && !result.protocolTerminal) return true;
 	return false;
@@ -228,12 +231,29 @@ function markOversizedStdoutLine(result: AgentRunResult): void {
 	appendDiagnostic(result, result.errorMessage);
 }
 
-function processJsonLine(line: string, result: AgentRunResult, emit: () => void): void {
+interface PostTerminalLifecycleState {
+	sawTurnEnd: boolean;
+	sawAgentEnd: boolean;
+}
+
+function createPostTerminalLifecycleState(): PostTerminalLifecycleState {
+	return { sawTurnEnd: false, sawAgentEnd: false };
+}
+
+function processJsonLine(line: string, result: AgentRunResult, emit: () => void, postTerminalLifecycle: PostTerminalLifecycleState): void {
 	const record = parseJsonRecordLine(line);
 	if (result.protocolTerminal) {
-		if (record && isAllowedPostTerminalLifecycle(record)) {
-			if (applyJsonEvent(result, record)) emit();
-			return;
+		if (record) {
+			const lifecycle = classifyPostTerminalLifecycle(record, postTerminalLifecycle);
+			if (lifecycle.accepted) {
+				if (applyJsonEvent(result, record)) emit();
+				return;
+			}
+			if (lifecycle.errorMessage) {
+				markPostTerminalProtocolError(result, lifecycle.errorMessage);
+				emit();
+				return;
+			}
 		}
 		if (line.trim().length > 0 && noteLateStdout(result)) emit();
 		return;
@@ -246,8 +266,50 @@ function processJsonLine(line: string, result: AgentRunResult, emit: () => void)
 	if (applyJsonEvent(result, record)) emit();
 }
 
-function isAllowedPostTerminalLifecycle(record: Record<string, unknown>): boolean {
-	return record.type === "auto_retry_end" || record.type === "agent_end";
+function classifyPostTerminalLifecycle(record: Record<string, unknown>, state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
+	if (record.type === "auto_retry_end") return classifyPostTerminalAutoRetryEnd(record, state);
+	if (record.type === "turn_end") return classifyPostTerminalTurnEnd(record, state);
+	if (record.type === "agent_end") return classifyPostTerminalAgentEnd(state);
+	return { accepted: false, errorMessage: undefined };
+}
+
+function classifyPostTerminalAutoRetryEnd(record: Record<string, unknown>, state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
+	if (state.sawAgentEnd) return rejectedPostTerminalLifecycle("auto_retry_end after agent_end");
+	if (record.success !== true) return rejectedPostTerminalLifecycle("auto_retry_end did not report success");
+	return { accepted: true, errorMessage: undefined };
+}
+
+function classifyPostTerminalTurnEnd(record: Record<string, unknown>, state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
+	if (state.sawAgentEnd) return rejectedPostTerminalLifecycle("turn_end after agent_end");
+	if (state.sawTurnEnd) return rejectedPostTerminalLifecycle("duplicate turn_end");
+	const message = record.message;
+	if (!isRecord(message)) return rejectedPostTerminalLifecycle("turn_end missing assistant message");
+	if (message.role !== "assistant") return rejectedPostTerminalLifecycle("turn_end message is not assistant role");
+	if (message.stopReason !== "stop") return rejectedPostTerminalLifecycle("turn_end stopReason is not stop");
+	if (message.errorMessage !== undefined) return rejectedPostTerminalLifecycle("turn_end message includes errorMessage");
+	const toolResults = record.toolResults;
+	if (!Array.isArray(toolResults)) return rejectedPostTerminalLifecycle("turn_end missing toolResults array");
+	if (toolResults.length !== 0) return rejectedPostTerminalLifecycle("turn_end has post-terminal tool results");
+	state.sawTurnEnd = true;
+	return { accepted: true, errorMessage: undefined };
+}
+
+function classifyPostTerminalAgentEnd(state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
+	if (state.sawAgentEnd) return rejectedPostTerminalLifecycle("duplicate agent_end");
+	if (!state.sawTurnEnd) return rejectedPostTerminalLifecycle("agent_end before turn_end");
+	state.sawAgentEnd = true;
+	return { accepted: true, errorMessage: undefined };
+}
+
+function rejectedPostTerminalLifecycle(reason: string): { accepted: boolean; errorMessage: string } {
+	return { accepted: false, errorMessage: `Subagent emitted invalid post-terminal lifecycle event: ${reason}.` };
+}
+
+function markPostTerminalProtocolError(result: AgentRunResult, message: string): void {
+	result.malformedStdout = true;
+	result.errorMessage = result.errorMessage ?? message;
+	noteFailureCause(result, result.errorMessage);
+	appendDiagnostic(result, message);
 }
 
 function noteLateStdout(result: AgentRunResult): boolean {
