@@ -13,6 +13,7 @@ import {
 	setOutputCapture,
 } from "../extensions/multiagent/src/json-events.ts";
 import { formatFailureProvenance } from "../extensions/multiagent/src/failure-provenance.ts";
+import { classifyPostTerminalLifecycle, createPostTerminalLifecycleState, finishPostTerminalLifecycleState } from "../extensions/multiagent/src/post-terminal-lifecycle.ts";
 import { formatDetailsForModel, formatStepOutputsForPrompt, truncateHead } from "../extensions/multiagent/src/result-format.ts";
 import { snapshotResult } from "../extensions/multiagent/src/snapshot.ts";
 import { EVENT_PREVIEW_CHARS, OUTPUT_INLINE_CHARS, STDERR_PREVIEW_CHARS, type AgentRunResult, type AgentTeamDetails } from "../extensions/multiagent/src/types.ts";
@@ -27,6 +28,33 @@ function makeResult() {
 		task: "find",
 		cwd: "/tmp",
 	});
+}
+
+function assistantPayload(content: unknown[], input: { stopReason?: string; errorMessage?: string; model?: string; usage?: Record<string, unknown>; timestamp?: number } = {}): Record<string, unknown> {
+	return {
+		role: "assistant",
+		content,
+		api: "fake-api",
+		provider: "fake-provider",
+		usage: input.usage ?? { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		model: input.model ?? "fake-model",
+		stopReason: input.stopReason ?? "stop",
+		timestamp: input.timestamp ?? 1,
+		...(input.errorMessage === undefined ? {} : { errorMessage: input.errorMessage }),
+	};
+}
+
+function assistantPayloadWithoutStop(content: unknown[], errorMessage?: string): Record<string, unknown> {
+	return {
+		role: "assistant",
+		content,
+		api: "fake-api",
+		provider: "fake-provider",
+		usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+		model: "fake-model",
+		timestamp: 1,
+		...(errorMessage === undefined ? {} : { errorMessage }),
+	};
 }
 
 function inlineOutput(result: AgentRunResult): string {
@@ -47,19 +75,63 @@ test("parseJsonRecordLine ignores non-json and non-object lines", () => {
 	assert.equal(parseJsonRecordLine("not json"), undefined);
 	assert.equal(parseJsonRecordLine("[]"), undefined);
 	assert.deepEqual(parseJsonRecordLine('{"type":"ok"}'), { type: "ok" });
+	assert.deepEqual(parseJsonRecordLine('\t{"type":"ok"}\r'), { type: "ok" });
+	assert.equal(parseJsonRecordLine('{"type":"ok"}\v'), undefined);
+	assert.equal(parseJsonRecordLine('{"type":"ok"}\u00a0'), undefined);
+});
+
+test("applyJsonEvent ignores valid non-assistant message_end", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: { role: "user", content: [{ type: "text", text: "context" }], timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: { role: "user", content: "context", timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: { role: "custom", customType: "note", content: "custom context", display: false, timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: { role: "bashExecution", command: "pwd", output: "/tmp", exitCode: 0, cancelled: false, truncated: false, timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: { role: "branchSummary", summary: "summary", fromId: "root", timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: { role: "compactionSummary", summary: "summary", tokensBefore: 10, timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "succeeded");
+	assert.equal(result.malformedStdout, false);
+	assert.equal(inlineOutput(result), "done");
+});
+
+test("applyJsonEvent rejects malformed non-assistant message_end", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: { role: "mystery", content: "context", timestamp: 1 } });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
+test("applyJsonEvent ignores valid toolResult message_end before final assistant output", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(result, { type: "message_end", message: { role: "toolResult", toolCallId: "call-1", toolName: "read", content: [{ type: "text", text: "tool output" }], isError: false, timestamp: 1 } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "succeeded");
+	assert.equal(result.malformedStdout, false);
+	assert.equal(inlineOutput(result), "done");
+});
+
+test("applyJsonEvent rejects malformed message_end before later success", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end" });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+	assert.equal(inlineOutput(result), "");
 });
 
 test("applyJsonEvent captures assistant output and usage", () => {
 	const result = makeResult();
 	const handled = applyJsonEvent(result, {
 		type: "message_end",
-		message: {
-			role: "assistant",
-			content: [{ type: "text", text: "done" }],
-			usage: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, totalTokens: 17, cost: { total: 0.01 } },
+		message: assistantPayload([{ type: "text", text: "done" }], {
+			usage: { input: 10, output: 5, cacheRead: 2, cacheWrite: 1, totalTokens: 17, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.01 } },
 			model: "test-model",
-			stopReason: "stop",
-		},
+		}),
 	});
 	assert.equal(handled, true);
 	assert.equal(inlineOutput(result), "done");
@@ -71,54 +143,173 @@ test("applyJsonEvent captures assistant output and usage", () => {
 	assert.equal(result.model, "test-model");
 });
 
-test("applyJsonEvent joins multiple assistant text blocks and ignores unknown block types", () => {
+test("applyJsonEvent joins text blocks and ignores valid non-text blocks", () => {
 	const result = makeResult();
 	applyJsonEvent(result, {
 		type: "message_end",
-		message: {
-			role: "assistant",
-			content: [
-				{ type: "text", text: "first" },
-				{ type: "toolCall", name: "noop", arguments: {} },
-				{ type: "reasoning", text: "internal" },
-				{ type: "text", text: "second" },
-			],
-			stopReason: "stop",
-		},
+		message: assistantPayload([
+			{ type: "text", text: "first" },
+			{ type: "toolCall", id: "call-1", name: "noop", arguments: {} },
+			{ type: "thinking", thinking: "internal" },
+			{ type: "text", text: "second" },
+		]),
 	});
 	assert.equal(inlineOutput(result), "first\n\nsecond");
 });
 
+test("applyJsonEvent rejects unknown assistant content blocks", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "reasoning", text: "internal" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
+test("applyJsonEvent rejects assistant message_end without required metadata", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" } });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
+test("applyJsonEvent rejects malformed assistant usage and optional fields", () => {
+	const badUsage = makeResult();
+	applyJsonEvent(badUsage, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }], { usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } } }) });
+	finishRunStatus(badUsage, 0, { aborted: false, timedOut: false });
+	assert.equal(badUsage.status, "failed");
+	assert.equal(badUsage.errorMessage, "Subagent emitted malformed assistant message_end event.");
+
+	const badError = makeResult();
+	applyJsonEvent(badError, { type: "message_end", message: { ...assistantPayload([{ type: "text", text: "done" }]), errorMessage: 7 } });
+	finishRunStatus(badError, 0, { aborted: false, timedOut: false });
+	assert.equal(badError.status, "failed");
+	assert.equal(badError.errorMessage, "Subagent emitted malformed assistant message_end event.");
+
+	const badBlock = makeResult();
+	applyJsonEvent(badBlock, { type: "message_end", message: assistantPayload([{ type: "text", text: "done", textSignature: 7 }]) });
+	finishRunStatus(badBlock, 0, { aborted: false, timedOut: false });
+	assert.equal(badBlock.status, "failed");
+	assert.equal(badBlock.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
+test("applyJsonEvent rejects malformed assistant tool calls", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "toolCall", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
+test("applyJsonEvent rejects non-finite assistant timestamps", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }], { timestamp: Infinity }) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
+test("failed shaped assistant frames do not leak toolUse or stale streamed output", () => {
+	const toolUseError = makeResult();
+	applyJsonEvent(toolUseError, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "checking" } });
+	applyJsonEvent(toolUseError, { type: "message_end", message: assistantPayload([{ type: "text", text: "tool narration" }, { type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse", errorMessage: "tool failed" }) });
+	finishRunStatus(toolUseError, 0, { aborted: false, timedOut: false });
+	assert.equal(toolUseError.status, "failed");
+	assert.equal(inlineOutput(toolUseError), "");
+	assert.equal(toolUseError.errorMessage, "Subagent assistant error: tool failed");
+
+	const stopError = makeResult();
+	applyJsonEvent(stopError, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale stream" } });
+	applyJsonEvent(stopError, { type: "message_end", message: assistantPayload([{ type: "text", text: "final with error" }], { stopReason: "stop", errorMessage: "reported error" }) });
+	finishRunStatus(stopError, 0, { aborted: false, timedOut: false });
+	assert.equal(stopError.status, "failed");
+	assert.equal(inlineOutput(stopError), "final with error");
+	assert.equal(stopError.errorMessage, "Subagent assistant error: reported error");
+
+	const missingStop = makeResult();
+	applyJsonEvent(missingStop, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale stream" } });
+	applyJsonEvent(missingStop, { type: "message_end", message: assistantPayloadWithoutStop([{ type: "text", text: "malformed final" }], "missing stop") });
+	finishRunStatus(missingStop, 0, { aborted: false, timedOut: false });
+	assert.equal(missingStop.status, "failed");
+	assert.equal(inlineOutput(missingStop), "");
+	assert.equal(missingStop.errorMessage, "Subagent assistant message_end omitted a success stopReason.");
+});
+
+test("applyJsonEvent rejects malformed assistant thinking blocks", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "thinking" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.errorMessage, "Subagent emitted malformed assistant message_end event.");
+});
+
 test("applyJsonEvent preserves leading and trailing assistant whitespace", () => {
 	const result = makeResult();
-	applyJsonEvent(result, {
-		type: "message_end",
-		message: {
-			role: "assistant",
-			content: [{ type: "text", text: "\n  first line\nsecond line  \n" }],
-			stopReason: "stop",
-		},
-	});
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "\n  first line\nsecond line  \n" }]) });
 	assert.equal(inlineOutput(result), "\n  first line\nsecond line  \n");
 	assert.equal(inlineOutput(result), "\n  first line\nsecond line  \n");
 });
 
 test("toolUse message_end is intermediate when followed by final stop", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }], stopReason: "toolUse" } });
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
 	assert.equal(result.status, "succeeded");
 	assert.equal(inlineOutput(result), "done");
 
+	const narrated = makeResult();
+	applyJsonEvent(narrated, { type: "message_end", message: assistantPayload([{ type: "text", text: "checking" }, { type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(narrated, { type: "message_end", message: { role: "toolResult", toolCallId: "call-1", toolName: "read", content: [{ type: "text", text: "tool output" }], isError: false, timestamp: 1 } });
+	applyJsonEvent(narrated, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	finishRunStatus(narrated, 0, { aborted: false, timedOut: false });
+	assert.equal(narrated.status, "succeeded");
+	assert.equal(inlineOutput(narrated), "done");
+
+	const streamed = makeResult();
+	applyJsonEvent(streamed, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "checking" } });
+	applyJsonEvent(streamed, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(streamed, { type: "message_end", message: { role: "toolResult", toolCallId: "call-1", toolName: "read", content: [{ type: "text", text: "tool output" }], isError: false, timestamp: 1 } });
+	applyJsonEvent(streamed, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after tool" } });
+	applyJsonEvent(streamed, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	finishRunStatus(streamed, 0, { aborted: false, timedOut: false });
+	assert.equal(streamed.status, "succeeded");
+	assert.equal(inlineOutput(streamed), "done");
+
+	const incomplete = makeResult();
+	applyJsonEvent(incomplete, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(incomplete, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after tool" } });
+	finishRunStatus(incomplete, 0, { aborted: false, timedOut: false });
+	assert.equal(incomplete.status, "failed");
+	assert.equal(inlineOutput(incomplete), "");
+	assert.equal(incomplete.errorMessage, "Subagent ended with non-success stop reason toolUse.");
+
+	const retriedIncomplete = makeResult();
+	applyJsonEvent(retriedIncomplete, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(retriedIncomplete, { type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1 });
+	applyJsonEvent(retriedIncomplete, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after retry" } });
+	finishRunStatus(retriedIncomplete, 1, { aborted: false, timedOut: false });
+	assert.equal(retriedIncomplete.status, "failed");
+	assert.equal(inlineOutput(retriedIncomplete), "");
+	assert.equal(retriedIncomplete.failureCause, "Subagent process exited with code 1.");
+
+	const compactedIncomplete = makeResult();
+	applyJsonEvent(compactedIncomplete, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
+	applyJsonEvent(compactedIncomplete, { type: "compaction_end", reason: "overflow", result: {}, aborted: false, willRetry: true });
+	applyJsonEvent(compactedIncomplete, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after compaction" } });
+	finishRunStatus(compactedIncomplete, 0, { aborted: false, timedOut: false });
+	assert.equal(compactedIncomplete.status, "failed");
+	assert.equal(inlineOutput(compactedIncomplete), "");
+	assert.equal(compactedIncomplete.errorMessage, "Subagent ended with non-success stop reason toolUse.");
+
 	const timedOut = makeResult();
-	applyJsonEvent(timedOut, { type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }], stopReason: "toolUse" } });
+	applyJsonEvent(timedOut, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
 	finishRunStatus(timedOut, undefined, { aborted: false, timedOut: true });
 	assert.equal(timedOut.status, "timed_out");
 	assert.equal(timedOut.failureProvenance ? formatFailureProvenance(timedOut.failureProvenance).includes(`likely_root=${JSON.stringify("parent timeout killed or interrupted the child before completion")}`) : false, true);
 
 	const aborted = makeResult();
-	applyJsonEvent(aborted, { type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }], stopReason: "toolUse" } });
+	applyJsonEvent(aborted, { type: "message_end", message: assistantPayload([{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], { stopReason: "toolUse" }) });
 	finishRunStatus(aborted, undefined, { aborted: true, timedOut: false });
 	assert.equal(aborted.status, "aborted");
 	assert.equal(aborted.failureProvenance ? formatFailureProvenance(aborted.failureProvenance).includes(`likely_root=${JSON.stringify("parent abort terminated child")}`) : false, true);
@@ -161,19 +352,28 @@ test("finishRunStatus fails closed for malformed, signaled, truncated, and incom
 	assert.equal(signaled.status, "failed");
 
 	const missingStopReason = makeResult();
-	applyJsonEvent(missingStopReason, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }] } });
+	applyJsonEvent(missingStopReason, { type: "message_end", message: assistantPayloadWithoutStop([{ type: "text", text: "done" }]) });
 	finishRunStatus(missingStopReason, 0, { aborted: false, timedOut: false });
 	assert.equal(missingStopReason.status, "failed");
+	assert.equal(missingStopReason.malformedStdout, true);
 	assert.equal(missingStopReason.errorMessage, "Subagent assistant message_end omitted a success stopReason.");
 
+	const missingStopReasonWithError = makeResult();
+	applyJsonEvent(missingStopReasonWithError, { type: "message_end", message: assistantPayloadWithoutStop([{ type: "text", text: "done" }], "WebSocket error") });
+	finishRunStatus(missingStopReasonWithError, 0, { aborted: false, timedOut: false });
+	assert.equal(missingStopReasonWithError.status, "failed");
+	assert.equal(missingStopReasonWithError.malformedStdout, true);
+	assert.equal(missingStopReasonWithError.errorMessage, "Subagent assistant message_end omitted a success stopReason.");
+
 	const staleStopReason = makeResult();
-	applyJsonEvent(staleStopReason, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "first" }], stopReason: "stop" } });
-	applyJsonEvent(staleStopReason, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "second" }] } });
+	applyJsonEvent(staleStopReason, { type: "message_end", message: assistantPayload([{ type: "text", text: "first" }]) });
+	applyJsonEvent(staleStopReason, { type: "message_end", message: assistantPayloadWithoutStop([{ type: "text", text: "second" }]) });
 	finishRunStatus(staleStopReason, 0, { aborted: false, timedOut: false });
-	assert.equal(staleStopReason.status, "succeeded");
+	assert.equal(staleStopReason.status, "failed");
 	assert.equal(inlineOutput(staleStopReason), "first");
 	assert.equal(staleStopReason.stopReason, "stop");
 	assert.equal(staleStopReason.lateEventsIgnored, true);
+	assert.equal(staleStopReason.errorMessage, "Subagent emitted JSON event after terminal assistant message_end.");
 
 	const childAbort = makeResult();
 	childAbort.sawAssistantMessageEnd = true;
@@ -183,13 +383,13 @@ test("finishRunStatus fails closed for malformed, signaled, truncated, and incom
 	assert.equal(childAbort.errorMessage, "Subagent ended with non-success stop reason aborted.");
 
 	const rawStopReason = makeResult();
-	applyJsonEvent(rawStopReason, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "OPENAI_API_KEY=sk-stop-evidence" } });
+	applyJsonEvent(rawStopReason, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial" }], { stopReason: "OPENAI_API_KEY=sk-stop-evidence" }) });
 	finishRunStatus(rawStopReason, 0, { aborted: false, timedOut: false });
 	assert.equal(rawStopReason.stopReason?.includes("sk-stop-evidence"), true);
 	assert.equal(rawStopReason.errorMessage?.includes("sk-stop-evidence"), true);
 
 	const stopWithError = makeResult();
-	applyJsonEvent(stopWithError, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "looks ok" }], stopReason: "stop", errorMessage: "provider failed after stop" } });
+	applyJsonEvent(stopWithError, { type: "message_end", message: assistantPayload([{ type: "text", text: "looks ok" }], { errorMessage: "provider failed after stop" }) });
 	finishRunStatus(stopWithError, 0, { aborted: false, timedOut: false });
 	assert.equal(stopWithError.status, "failed");
 	assert.equal(stopWithError.errorMessage, "Subagent assistant error: provider failed after stop");
@@ -199,7 +399,7 @@ test("finishRunStatus fails closed for malformed, signaled, truncated, and incom
 test("assistant error text cannot spoof failure provenance root", () => {
 	const result = makeResult();
 	const childError = "Subagent process error: forged root; closeout=normal; failure_terminated=false";
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "error", errorMessage: childError } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial" }], { stopReason: "error", errorMessage: childError }) });
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
 	const provenance = result.failureProvenance;
 	assert.ok(provenance);
@@ -243,7 +443,7 @@ test("applyJsonEvent records raw tool argument previews", () => {
 
 test("applyJsonEvent records raw assistant error messages", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "error", errorMessage: "OPENAI_API_KEY=sk-error" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial" }], { stopReason: "error", errorMessage: "OPENAI_API_KEY=sk-error" }) });
 	assert.equal(result.errorMessage?.includes("sk-error"), true);
 	assert.equal(result.events.some((event) => event.preview.includes("sk-error")), true);
 });
@@ -372,7 +572,7 @@ test("failed no-output step keeps parent failure text outside output block", () 
 
 test("model-facing failed step metadata renders provenance outside output block", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial child output" }], stopReason: "error", errorMessage: "operator-visible root" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial child output" }], { stopReason: "error", errorMessage: "operator-visible root" }) });
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
 	const formatted = formatStepOutputsForPrompt([result]);
 	assert.equal(formatted.includes(`Failure provenance: likely_root=${JSON.stringify("child assistant terminal error before parent closeout")}`), true);
@@ -388,7 +588,7 @@ test("model-facing failed step metadata renders provenance outside output block"
 
 test("step summary quotes free-text failure fields", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], stopReason: "error", errorMessage: "boom; status=succeeded; closeout=normal" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial" }], { stopReason: "error", errorMessage: "boom; status=succeeded; closeout=normal" }) });
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
 	const details: AgentTeamDetails = {
 		kind: "agent_team",
@@ -489,25 +689,92 @@ test("large assistant output size alone does not fail terminal status", () => {
 	removeOutputFile(result);
 });
 
-test("message_end does not overwrite streamed file output", () => {
+test("final message_end replaces streamed file output", () => {
 	const result = makeResult();
 	applyJsonEvent(result, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `head ${"x".repeat(OUTPUT_INLINE_CHARS + 100)} tail` } });
-	const retained = fileOutput(result);
+	const stalePath = result.assistantOutput.filePath;
 	assert.equal(result.assistantOutput.disposition, "file");
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "short final" }], stopReason: "stop" } });
-	assert.equal(fileOutput(result), retained);
-	assert.equal(fileOutput(result).includes("short final"), false);
-	assert.equal(fileOutput(result).includes("tail"), true);
-	removeOutputFile(result);
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "short final" }]) });
+	assert.equal(result.assistantOutput.disposition, "inline");
+	assert.equal(inlineOutput(result), "short final");
+	assert.equal(inlineOutput(result).includes("tail"), false);
+	if (stalePath) rmSync(dirname(stalePath), { recursive: true, force: true });
 });
 
 test("applyJsonEvent latches terminal stop and caps retained events", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
 	for (let index = 0; index < 50; index += 1) applyJsonEvent(result, { type: "tool_execution_start", toolName: `late-${index}`, args: {} });
 	assert.equal(inlineOutput(result), "done");
 	assert.equal(result.eventsTruncated, false);
-	assert.equal(result.events.some((event) => event.preview.includes("Ignored child JSON event")), true);
+	assert.equal(result.errorMessage, "Subagent emitted JSON event after terminal assistant message_end.");
+	assert.equal(result.events.some((event) => event.preview.includes("Subagent emitted JSON event after terminal assistant message_end.")), true);
+});
+
+test("applyJsonEvent rejects auto retry restarts after terminal stop", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	applyJsonEvent(result, { type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "late" });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "late overwrite" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(inlineOutput(result), "done");
+	assert.equal(result.errorMessage, "Subagent emitted JSON event after terminal assistant message_end.");
+});
+
+test("post-terminal lifecycle classifier rejects orphan and malformed compaction endings", () => {
+	const orphan = createPostTerminalLifecycleState();
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_end", reason: "threshold", result: {}, aborted: false, willRetry: false }, orphan).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: compaction_end before compaction_start.");
+
+	const malformed = createPostTerminalLifecycleState();
+	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, malformed).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "agent_end", messages: [] }, malformed).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_start", reason: "threshold" }, malformed).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_end", reason: "threshold", result: {}, aborted: "false", willRetry: false }, malformed).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: compaction_end aborted flag is malformed.");
+
+	const nonFiniteAgentEnd = createPostTerminalLifecycleState();
+	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, nonFiniteAgentEnd).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "agent_end", messages: [{ role: "branchSummary", summary: "summary", fromId: "root", timestamp: Infinity }] }, nonFiniteAgentEnd).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: agent_end messages are malformed.");
+
+	const missingAgentEnd = createPostTerminalLifecycleState();
+	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, missingAgentEnd).accepted, true);
+	assert.equal(finishPostTerminalLifecycleState(missingAgentEnd), "Subagent emitted invalid post-terminal lifecycle event: agent_end missing after turn_end.");
+
+	const openPostAgentCompaction = createPostTerminalLifecycleState();
+	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, openPostAgentCompaction).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "agent_end", messages: [] }, openPostAgentCompaction).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_start", reason: "threshold" }, openPostAgentCompaction).accepted, true);
+	assert.equal(finishPostTerminalLifecycleState(openPostAgentCompaction), undefined);
+});
+
+test("applyJsonEvent rejects unvalidated post-terminal lifecycle events", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	applyJsonEvent(result, { type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(result.lateEventsIgnored, true);
+	assert.equal(result.errorMessage, "Subagent emitted JSON event after terminal assistant message_end.");
+
+	const prevalidated = makeResult();
+	applyJsonEvent(prevalidated, { type: "message_end", message: assistantPayload([{ type: "text", text: "done" }]) });
+	applyJsonEvent(prevalidated, { type: "compaction_start", reason: "threshold" }, { postTerminalLifecycleAccepted: true });
+	applyJsonEvent(prevalidated, { type: "compaction_end", reason: "threshold", result: {}, aborted: false, willRetry: false }, { postTerminalLifecycleAccepted: true });
+	finishRunStatus(prevalidated, 0, { aborted: false, timedOut: false });
+	assert.equal(prevalidated.status, "succeeded");
+	assert.equal(prevalidated.lateEventsIgnored, false);
+	assert.equal(prevalidated.events.some((event) => event.label === "compaction"), true);
+});
+
+test("applyJsonEvent rejects compaction retry after terminal stop", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "first" }]) });
+	applyJsonEvent(result, { type: "compaction_end", reason: "overflow", result: {}, aborted: false, willRetry: true });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "second" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "failed");
+	assert.equal(inlineOutput(result), "first");
+	assert.equal(result.errorMessage, "Subagent emitted JSON event after terminal assistant message_end.");
 });
 
 test("applyJsonEvent caps pre-terminal retained events with marker and newest events", () => {
@@ -531,9 +798,27 @@ test("applyJsonEvent surfaces retry and compaction lifecycle events", () => {
 	assert.equal(result.events.some((event) => event.preview.includes("sk-compact")), true);
 });
 
+test("overflow compaction retry resets transient assistant failure state", () => {
+	const result = makeResult();
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial failed attempt" }], { stopReason: "error", errorMessage: "context window overflow" }) });
+	assert.equal(result.errorMessage, "Subagent assistant error: context window overflow");
+	assert.equal(inlineOutput(result), "partial failed attempt");
+	applyJsonEvent(result, { type: "compaction_start", reason: "overflow" });
+	applyJsonEvent(result, { type: "compaction_end", reason: "overflow", result: {}, aborted: false, willRetry: true });
+	assert.equal(result.errorMessage, undefined);
+	assert.equal(result.failureCause, undefined);
+	assert.equal(result.stopReason, undefined);
+	assert.equal(result.sawAssistantMessageEnd, false);
+	assert.equal(inlineOutput(result), "");
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "recovered" }]) });
+	finishRunStatus(result, 0, { aborted: false, timedOut: false });
+	assert.equal(result.status, "succeeded");
+	assert.equal(inlineOutput(result), "recovered");
+});
+
 test("auto retry start resets transient assistant failure state", () => {
 	const result = makeResult();
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial failed attempt" }], stopReason: "error", errorMessage: "terminated" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "partial failed attempt" }], { stopReason: "error", errorMessage: "terminated" }) });
 	assert.equal(result.errorMessage, "Subagent assistant error: terminated");
 	assert.equal(inlineOutput(result), "partial failed attempt");
 	applyJsonEvent(result, { type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1 });
@@ -542,7 +827,7 @@ test("auto retry start resets transient assistant failure state", () => {
 	assert.equal(result.stopReason, undefined);
 	assert.equal(result.sawAssistantMessageEnd, false);
 	assert.equal(inlineOutput(result), "");
-	applyJsonEvent(result, { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" } });
+	applyJsonEvent(result, { type: "message_end", message: assistantPayload([{ type: "text", text: "recovered" }]) });
 	finishRunStatus(result, 0, { aborted: false, timedOut: false });
 	assert.equal(result.status, "succeeded");
 	assert.equal(inlineOutput(result), "recovered");

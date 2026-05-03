@@ -71,9 +71,12 @@ function assistantMessage(text: string, stopReason = "stop"): string {
 		message: {
 			role: "assistant",
 			content: [{ type: "text", text }],
-			usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0 } },
+			api: "fake-api",
+			provider: "fake-provider",
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 			model: "fake-model",
 			stopReason,
+			timestamp: 1,
 		},
 	})}\n`;
 }
@@ -84,12 +87,19 @@ function assistantErrorMessage(text: string): string {
 		message: {
 			role: "assistant",
 			content: [{ type: "text", text }],
-			usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0 } },
+			api: "fake-api",
+			provider: "fake-provider",
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 			model: "fake-model",
 			stopReason: "error",
 			errorMessage: "terminated",
+			timestamp: 1,
 		},
 	})}\n`;
+}
+
+function assistantToolUseMessage(): string {
+	return `${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "toolCall", id: "call-1", name: "read", arguments: {} }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "toolUse", timestamp: 1 } })}\n`;
 }
 
 function terminalTurnEnd(input: { message?: Record<string, unknown>; toolResults?: unknown[] } = {}): string {
@@ -98,9 +108,12 @@ function terminalTurnEnd(input: { message?: Record<string, unknown>; toolResults
 		message: input.message ?? {
 			role: "assistant",
 			content: [{ type: "text", text: "ok" }],
-			usage: { input: 1, output: 1, totalTokens: 2, cost: { total: 0 } },
+			api: "fake-api",
+			provider: "fake-provider",
+			usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 			model: "fake-model",
 			stopReason: "stop",
+			timestamp: 1,
 		},
 		toolResults: input.toolResults ?? [],
 	})}\n`;
@@ -114,12 +127,26 @@ function autoRetryEnd(success: boolean): string {
 	return `${JSON.stringify({ type: "auto_retry_end", success, attempt: 1 })}\n`;
 }
 
+function compactionStart(): string {
+	return `${JSON.stringify({ type: "compaction_start", reason: "threshold" })}\n`;
+}
+
+function compactionEnd(input: { aborted?: boolean; errorMessage?: string; reason?: string; willRetry?: boolean } = {}): string {
+	return `${JSON.stringify({ type: "compaction_end", reason: input.reason ?? "threshold", result: {}, aborted: input.aborted ?? false, willRetry: input.willRetry ?? false, errorMessage: input.errorMessage })}\n`;
+}
+
 function inlineOutput(result: AgentRunResult): string {
 	return result.assistantOutput.inlineText ?? "";
 }
 
 function outputPath(result: AgentRunResult): string | undefined {
 	return result.assistantOutput.filePath;
+}
+
+function savedStdoutPath(result: AgentRunResult): string | undefined {
+	const prefix = "Oversized child stdout saved: ";
+	const event = result.events.find((item) => item.preview.startsWith(prefix));
+	return event ? event.preview.slice(prefix.length) : undefined;
 }
 
 test("runAgentTeam launches children with no extensions and no tools for inline defaults", async () => {
@@ -604,6 +631,599 @@ test("runAgentTeam accepts normal Pi lifecycle after terminal stop", async () =>
 	await rm(root, { recursive: true, force: true });
 });
 
+test("runAgentTeam accepts valid JSON lines split across stdout chunks", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-split-json-lines-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "split json lines",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				const writeSplit = (line: string) => {
+					const split = Math.max(1, Math.floor(line.length / 2));
+					child.stdout.write(line.slice(0, split));
+					child.stdout.write(line.slice(split));
+				};
+				queueMicrotask(() => {
+					writeSplit(assistantMessage("ok"));
+					writeSplit(terminalTurnEnd());
+					writeSplit(agentEnd());
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(step.lateEventsIgnored, false);
+	assert.equal(inlineOutput(step), "ok");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts pre-assistant user message_end", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-user-message-end-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "user message_end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "x" }], timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "user", content: "x", timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "custom", customType: "note", content: "x", display: false, timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "bashExecution", command: "pwd", output: root, exitCode: 0, cancelled: false, truncated: false, timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "branchSummary", summary: "summary", fromId: "root", timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "compactionSummary", summary: "summary", tokensBefore: 10, timestamp: 1 } })}\n`);
+					child.stdout.write(assistantMessage("ok"));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(inlineOutput(result.details.steps[0]), "ok");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts toolResult message_end before final assistant output", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-tool-result-message-end-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "tool result message_end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantToolUseMessage());
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "toolResult", toolCallId: "call-1", toolName: "read", content: [{ type: "text", text: "tool output" }], isError: false, timestamp: 1 } })}\n`);
+					child.stdout.write(assistantMessage("done"));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(inlineOutput(step), "done");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam overwrites narrated toolUse output with final assistant output", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-tool-use-narration-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "tool use narration",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "streamed checking" } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "checking" }, { type: "toolCall", id: "call-1", name: "read", arguments: {} }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "toolUse", timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "toolResult", toolCallId: "call-1", toolName: "read", content: [{ type: "text", text: "tool output" }], isError: false, timestamp: 1 } })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after tool" } })}\n`);
+					child.stdout.write(assistantMessage("done"));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(inlineOutput(step), "done");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam does not leak streamed deltas after incomplete toolUse", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-tool-use-incomplete-stream-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "incomplete tool use stream",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantToolUseMessage());
+					child.stdout.write(`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after tool" } })}\n`);
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.errorMessage, "Subagent ended with non-success stop reason toolUse.");
+	assert.equal(inlineOutput(step), "");
+
+	const retried = await runAgentTeam(
+		{
+			action: "run",
+			objective: "incomplete tool use after retry",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantToolUseMessage());
+					child.stdout.write(`${JSON.stringify({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1 })}\n`);
+					child.stdout.write(`${JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "stale after retry" } })}\n`);
+					child.close(1);
+				});
+				return child;
+			},
+		},
+	);
+	const retriedStep = retried.details.steps[0];
+	assert.equal(retriedStep.status, "failed");
+	assert.equal(retriedStep.failureCause, "Subagent process exited with code 1.");
+	assert.equal(inlineOutput(retriedStep), "");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam rejects undelimited JSON records across chunks", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-undelimited-json-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "undelimited json chunks",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok").trimEnd());
+					child?.stdout.write(terminalTurnEnd().trimEnd());
+					child?.stdout.write(agentEnd().trimEnd());
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam rejects a complete pre-terminal JSON record without delimiter before timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-undelimited-open-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "undelimited open",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 2 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write(assistantMessage("ok").trimEnd()));
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam rejects valid JSON residual at EOF without line delimiter", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-undelimited-eof-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "undelimited eof",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok").trimEnd());
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts compaction lifecycle after terminal stop", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-compaction-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal compaction lifecycle",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(terminalTurnEnd());
+					child.stdout.write(agentEnd());
+					child.stdout.write(compactionStart());
+					child.stdout.write(compactionEnd());
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(result.details.steps[0].lateEventsIgnored, false);
+	assert.equal(result.details.steps[0].events.some((event) => event.label === "compaction"), true);
+
+	const openCompaction = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal open compaction lifecycle",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(terminalTurnEnd());
+					child.stdout.write(agentEnd());
+					child.stdout.write(compactionStart());
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const openStep = openCompaction.details.steps[0];
+	assert.equal(openStep.status, "succeeded");
+	assert.equal(openStep.malformedStdout, false);
+	assert.equal(openStep.events.some((event) => event.label === "compaction" && event.preview === "threshold started"), true);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts delayed split post-terminal JSON token", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-split-token-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal split json token",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				queueMicrotask(() => {
+					const line = compactionEnd();
+					const split = line.indexOf("false");
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(terminalTurnEnd());
+					child?.stdout.write(agentEnd());
+					child?.stdout.write(compactionStart());
+					child?.stdout.write(line.slice(0, split + 1));
+					setTimeout(() => {
+						child?.stdout.write(line.slice(split + 1));
+						child?.close(0);
+					}, 300);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.deepEqual(child?.killSignals, []);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts oversized valid post-terminal agent_end JSON", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-large-agent-end-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal large agent end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(terminalTurnEnd());
+					child.stdout.write(`${JSON.stringify({ type: "agent_end", messages: [{ role: "branchSummary", summary: "x".repeat(1_000_001), fromId: "root", timestamp: 1 }] })}\n`);
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(savedStdoutPath(step), undefined);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts delayed split oversized valid post-terminal agent_end JSON", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-split-large-agent-end-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal split large agent end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				queueMicrotask(() => {
+					const line = `${JSON.stringify({ type: "agent_end", messages: [{ role: "branchSummary", summary: "x".repeat(1_000_001), fromId: "root", timestamp: 1 }] })}\n`;
+					const split = 1_000_001;
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(terminalTurnEnd());
+					child?.stdout.write(line.slice(0, split));
+					setTimeout(() => {
+						child?.stdout.write(line.slice(split));
+						child?.close(0);
+					}, 300);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(savedStdoutPath(step), undefined);
+	assert.deepEqual(child?.killSignals, []);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam saves oversized JSON lifecycle evidence when validation fails", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-large-invalid-agent-end-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal large invalid agent end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					const line = `${JSON.stringify({ type: "agent_end", messages: [{ role: "branchSummary", summary: "x".repeat(1_000_001), timestamp: 1 }] })}\n`;
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(terminalTurnEnd());
+					child.stdout.write(line);
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage?.includes("agent_end messages are malformed"), true);
+	const saved = savedStdoutPath(step);
+	assert.notEqual(saved, undefined);
+	const savedContent = readFileSync(saved ?? "", "utf8");
+	assert.equal(savedContent.includes("branchSummary"), true);
+	assert.equal(savedContent, JSON.stringify({ type: "agent_end", messages: [{ role: "branchSummary", summary: "x".repeat(1_000_001), timestamp: 1 }] }));
+	await rm(dirname(saved ?? root), { recursive: true, force: true });
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts agent_end messages with image content", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-terminal-image-agent-end-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "terminal image agent end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(terminalTurnEnd());
+					child.stdout.write(`${JSON.stringify({ type: "agent_end", messages: [{ role: "toolResult", toolCallId: "call-1", toolName: "screenshot", content: [{ type: "image", data: "abc", mimeType: "image/png" }], isError: false, timestamp: 1 }] })}\n`);
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(result.details.steps[0].malformedStdout, false);
+	await rm(root, { recursive: true, force: true });
+});
+
 test("runAgentTeam fails closed on invalid post-terminal lifecycle", async () => {
 	const cases: { name: string; lines: string[]; reason: string }[] = [
 		{
@@ -622,9 +1242,29 @@ test("runAgentTeam fails closed on invalid post-terminal lifecycle", async () =>
 			reason: "turn_end missing assistant message",
 		},
 		{
+			name: "turn end malformed content",
+			lines: [terminalTurnEnd({ message: { role: "assistant", stopReason: "stop" } })],
+			reason: "turn_end message content is malformed",
+		},
+		{
+			name: "turn end malformed text block",
+			lines: [terminalTurnEnd({ message: { role: "assistant", content: [{ type: "text" }], stopReason: "stop" } })],
+			reason: "turn_end message content is malformed",
+		},
+		{
+			name: "turn end malformed tool call",
+			lines: [terminalTurnEnd({ message: { role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }], stopReason: "stop" } })],
+			reason: "turn_end message content is malformed",
+		},
+		{
 			name: "turn end assistant error",
 			lines: [terminalTurnEnd({ message: { role: "assistant", content: [], stopReason: "stop", errorMessage: "bad" } })],
 			reason: "turn_end message includes errorMessage",
+		},
+		{
+			name: "turn end malformed optional content field",
+			lines: [terminalTurnEnd({ message: { role: "assistant", content: [{ type: "text", text: "ok", textSignature: 7 }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 } })],
+			reason: "turn_end message content is malformed",
 		},
 		{
 			name: "turn end tool results",
@@ -640,6 +1280,111 @@ test("runAgentTeam fails closed on invalid post-terminal lifecycle", async () =>
 			name: "agent end before turn end",
 			lines: [agentEnd()],
 			reason: "agent_end before turn_end",
+		},
+		{
+			name: "agent end missing messages",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end" })}\n`],
+			reason: "agent_end missing messages array",
+		},
+		{
+			name: "agent end malformed assistant message",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "assistant" }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed tool call",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "assistant", content: [{ type: "toolCall", name: "read", arguments: {} }] }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed optional content field",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "assistant", content: [{ type: "thinking", thinking: "x", thinkingSignature: 7 }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed custom message",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "custom", content: "x" }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed bash message",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "bashExecution", command: "ls", output: "x" }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed branch summary",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "branchSummary", summary: "x" }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed compaction summary",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "compactionSummary", summary: "x" }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed user message",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "user", content: "x" }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "agent end malformed tool result",
+			lines: [terminalTurnEnd(), `${JSON.stringify({ type: "agent_end", messages: [{ role: "toolResult", toolCallId: "x", toolName: "x", content: [] }] })}\n`],
+			reason: "agent_end messages are malformed",
+		},
+		{
+			name: "turn end missing terminal agent end",
+			lines: [terminalTurnEnd()],
+			reason: "agent_end missing after turn_end",
+		},
+		{
+			name: "compaction start before agent end",
+			lines: [compactionStart()],
+			reason: "compaction_start before agent_end",
+		},
+		{
+			name: "compaction before delayed agent end",
+			lines: [terminalTurnEnd(), compactionStart(), compactionEnd(), agentEnd()],
+			reason: "compaction_start before agent_end",
+		},
+		{
+			name: "orphan post-terminal compaction end",
+			lines: [terminalTurnEnd(), agentEnd(), compactionEnd()],
+			reason: "compaction_end before compaction_start",
+		},
+		{
+			name: "failed post-terminal compaction end",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), compactionEnd({ errorMessage: "bad" })],
+			reason: "compaction_end reported error",
+		},
+		{
+			name: "post-terminal compaction retry",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), compactionEnd({ reason: "overflow", willRetry: true })],
+			reason: "compaction_end requested retry after terminal stop",
+		},
+		{
+			name: "malformed post-terminal compaction aborted flag",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), `${JSON.stringify({ type: "compaction_end", reason: "threshold", result: {}, aborted: "false", willRetry: false })}\n`],
+			reason: "compaction_end aborted flag is malformed",
+		},
+		{
+			name: "malformed post-terminal compaction retry flag",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), `${JSON.stringify({ type: "compaction_end", reason: "threshold", result: {}, aborted: false, willRetry: "false" })}\n`],
+			reason: "compaction_end retry flag is malformed",
+		},
+		{
+			name: "malformed post-terminal compaction result",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), `${JSON.stringify({ type: "compaction_end", reason: "threshold", result: "ok", aborted: false, willRetry: false })}\n`],
+			reason: "compaction_end result is malformed",
+		},
+		{
+			name: "malformed auto retry end attempt",
+			lines: [`${JSON.stringify({ type: "auto_retry_end", success: true })}\n`],
+			reason: "auto_retry_end attempt is malformed",
+		},
+		{
+			name: "malformed auto retry end final error",
+			lines: [`${JSON.stringify({ type: "auto_retry_end", success: true, attempt: 1, finalError: 7 })}\n`],
+			reason: "auto_retry_end finalError is malformed",
 		},
 		{
 			name: "failed auto retry end",
@@ -682,14 +1427,14 @@ test("runAgentTeam fails closed on invalid post-terminal lifecycle", async () =>
 	}
 });
 
-test("runAgentTeam ignores late non-json stdout after terminal stop", async () => {
+test("runAgentTeam fails on late non-json stdout after terminal stop", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-stdout-${Date.now()}`), { recursive: true });
 	const result = await runAgentTeam(
 		{
 			action: "run",
 			objective: "late stdout",
 			agents: [{ id: "worker", kind: "inline", system: "x" }],
-			steps: [{ id: "ok", agent: "worker", task: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
 		},
 		{
 			cwd: root,
@@ -709,9 +1454,586 @@ test("runAgentTeam ignores late non-json stdout after terminal stop", async () =
 			},
 		},
 	);
-	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(result.details.steps[0].status, "failed");
 	assert.equal(result.details.steps[0].lateEventsIgnored, true);
-	assert.equal(result.details.steps[0].malformedStdout, false);
+	assert.equal(result.details.steps[0].malformedStdout, true);
+	assert.equal(result.details.steps[0].errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam fails on late non-json whitespace stdout after terminal stop", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-non-json-whitespace-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late non-json whitespace stdout",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write("\v\n");
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].lateEventsIgnored, true);
+	assert.equal(result.details.steps[0].malformedStdout, true);
+	assert.equal(result.details.steps[0].errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates late stdout after prior child error", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-stdout-after-error-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late stdout after prior error",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(compactionEnd({ errorMessage: "before terminal" }));
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write("late noise after stop\n");
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.events.some((event) => event.preview.includes("Subagent emitted stdout after terminal assistant message_end.")), true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates invalid post-terminal compaction without waiting for timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-orphan-compaction-terminate-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "invalid compaction termination",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(compactionEnd());
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.errorMessage?.includes("compaction_end before compaction_start"), true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates small unterminated late stdout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-small-late-stdout-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "small late stdout",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write("late noise");
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates complete undelimited late JSON before timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-undelimited-open-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "complete late json without newline",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 2 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(JSON.stringify({ type: "tool_execution_start", toolName: "late", args: {} }));
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates complete undelimited lifecycle JSON before timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-lifecycle-undelimited-open-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "complete late lifecycle without newline",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 2 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(terminalTurnEnd().trimEnd());
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates complete undelimited late JSON despite whitespace drip", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-whitespace-drip-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	let interval: ReturnType<typeof setInterval> | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "complete late json whitespace drip",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 2 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					if (interval) clearInterval(interval);
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(JSON.stringify({ type: "tool_execution_start", toolName: "late", args: {} }));
+					interval = setInterval(() => child?.stdout.write(" "), 50);
+				});
+				return child;
+			},
+		},
+	);
+	if (interval) clearInterval(interval);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates trailing-garbage JSON prefix before timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-trailing-garbage-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late json trailing garbage",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 2 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write('{"type":"x"}x');
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam fails unterminated late JSON at EOF", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-no-newline-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late json without newline",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write(JSON.stringify({ type: "tool_execution_start", toolName: "late", args: {} }));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam fails incomplete late JSON prefix at EOF", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-incomplete-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late incomplete json prefix",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.stdout.write('{"type":"turn_end"');
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates malformed late JSON prefix after terminal stop", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-prefix-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late malformed json prefix",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write("{not json");
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates malformed quoted-key late JSON prefix", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-json-key-prefix-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late malformed quoted-key json prefix",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write('{"type": not json');
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates auto retry restart after terminal stop", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-auto-retry-start-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late auto retry restart",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(`${JSON.stringify({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "late" })}\n`);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.errorMessage, "Subagent emitted stdout after terminal assistant message_end.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates invalid post-terminal lifecycle without waiting for timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-invalid-lifecycle-terminate-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "invalid lifecycle termination",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(assistantMessage("ok"));
+					child?.stdout.write(terminalTurnEnd({ toolResults: [{ role: "toolResult", toolCallId: "x", toolName: "x", content: [] }] }));
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.errorMessage?.includes("turn_end has post-terminal tool results"), true);
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
 	await rm(root, { recursive: true, force: true });
 });
 
@@ -746,6 +2068,89 @@ test("runAgentTeam preserves assistant output snapshots and temp evidence", asyn
 	assert.equal(inlineOutput(result.details.steps[0]).includes("sk-output-evidence"), true);
 	assert.equal(result.details.steps[0].assistantOutput.disposition, "inline");
 	assert.equal(outputPath(result.details.steps[0]), undefined);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts oversized valid pre-terminal assistant output", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-large-assistant-message-${Date.now()}`), { recursive: true });
+	const largeOutput = "x".repeat(1_000_001);
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "large assistant output",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage(largeOutput));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(step.assistantOutput.disposition, "file");
+	assert.equal(step.assistantOutput.chars, largeOutput.length);
+	const path = outputPath(step);
+	assert.equal(typeof path, "string");
+	assert.equal(await readFile(path ?? "", "utf8"), largeOutput);
+	await rm(dirname(path ?? root), { recursive: true, force: true });
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam accepts oversized split pre-terminal assistant output", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-large-split-assistant-message-${Date.now()}`), { recursive: true });
+	const largeOutput = "x".repeat(1_000_001);
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "large split assistant output",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "ok", agent: "worker", task: "x" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				queueMicrotask(() => {
+					const line = assistantMessage(largeOutput);
+					child?.stdout.write(line.slice(0, 1_000_001));
+					setTimeout(() => {
+						child?.stdout.write(line.slice(1_000_001));
+						child?.close(0);
+					}, 300);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.malformedStdout, false);
+	assert.equal(step.assistantOutput.disposition, "file");
+	const path = outputPath(step);
+	assert.equal(typeof path, "string");
+	assert.equal(await readFile(path ?? "", "utf8"), largeOutput);
+	assert.deepEqual(child?.killSignals, []);
+	await rm(dirname(path ?? root), { recursive: true, force: true });
 	await rm(root, { recursive: true, force: true });
 });
 
@@ -976,6 +2381,255 @@ test("runAgentTeam terminates malformed stdout without requiring a timeout", asy
 	await rm(root, { recursive: true, force: true });
 });
 
+test("runAgentTeam terminates small unterminated non-json stdout before terminal", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-small-preterminal-stdout-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "preterminal stdout",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write("not json"));
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted non-JSON stdout while running in JSON mode.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates malformed unterminated JSON prefix before terminal", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-preterminal-json-prefix-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "preterminal malformed json prefix",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write("{not json"));
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted non-JSON stdout while running in JSON mode.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates malformed unterminated quoted-key JSON prefix before terminal", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-preterminal-json-key-prefix-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "preterminal malformed quoted-key json prefix",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write('{"type": not json'));
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.malformedStdout, true);
+	assert.equal(step.errorMessage, "Subagent emitted non-JSON stdout while running in JSON mode.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates assistant message_end missing stopReason without waiting for timeout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-missing-stop-terminate-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "missing stop termination",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "emit missing stop" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "partial" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", errorMessage: "WebSocket error", timestamp: 1 } })}\n`));
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.errorMessage, "Subagent assistant message_end omitted a success stopReason.");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates malformed message_end before later success", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-malformed-message-end-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "malformed message_end",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "x" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => {
+					child?.stdout.write(`${JSON.stringify({ type: "message_end" })}\n`);
+					child?.stdout.write(assistantMessage("late success"));
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "failed");
+	assert.equal(step.timedOut, false);
+	assert.equal(step.errorMessage, "Subagent emitted malformed assistant message_end event.");
+	assert.equal(inlineOutput(step), "");
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates malformed assistant message_end shapes", async () => {
+	const cases = [
+		{ name: "missing metadata", message: { role: "assistant", content: [{ type: "text", text: "done" }], stopReason: "stop" } },
+		{ name: "unknown content", message: { role: "assistant", content: [{ type: "reasoning", text: "internal" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 } },
+		{ name: "incomplete usage cost", message: { role: "assistant", content: [{ type: "text", text: "done" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 } },
+		{ name: "malformed optional error", message: { role: "assistant", content: [{ type: "text", text: "done" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", errorMessage: 7, timestamp: 1 } },
+	];
+	for (const item of cases) {
+		const root = await mkdir(join(tmpdir(), `pi-multiagent-malformed-assistant-${Date.now()}-${item.name.replace(/\s+/g, "-")}`), { recursive: true });
+		let child: FakeChild | undefined;
+		const result = await runAgentTeam(
+			{
+				action: "run",
+				objective: item.name,
+				agents: [{ id: "worker", kind: "inline", system: "x" }],
+				steps: [{ id: "bad", agent: "worker", task: "x" }],
+				limits: { timeoutSecondsPerStep: 1 },
+			},
+			{
+				cwd: root,
+				discovery: discovery(root),
+				library,
+				defaults: { model: undefined, thinking: undefined },
+				signal: undefined,
+				onUpdate: undefined,
+				spawnProcess: () => {
+					child = new FakeChild();
+					const originalKill = child.kill.bind(child);
+					child.kill = (signal?: NodeJS.Signals) => {
+						const accepted = originalKill(signal);
+						setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+						return accepted;
+					};
+					queueMicrotask(() => child?.stdout.write(`${JSON.stringify({ type: "message_end", message: item.message })}\n`));
+					return child;
+				},
+			},
+		);
+		const step = result.details.steps[0];
+		assert.equal(step.status, "failed", item.name);
+		assert.equal(step.timedOut, false, item.name);
+		assert.equal(step.errorMessage, "Subagent emitted malformed assistant message_end event.", item.name);
+		assert.deepEqual(child?.killSignals, ["SIGTERM"], item.name);
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("runAgentTeam lets child Pi close after assistant terminal error", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-assistant-error-closeout-${Date.now()}`), { recursive: true });
 	let child: FakeChild | undefined;
@@ -1038,7 +2692,7 @@ test("runAgentTeam allows child Pi auto-retry to recover from transient assistan
 					child.stdout.write(`${JSON.stringify({ type: "auto_retry_start", attempt: 1, maxAttempts: 3, delayMs: 1, errorMessage: "terminated" })}\n`);
 					child.stdout.write(assistantMessage("recovered output"));
 					child.stdout.write(autoRetryEnd(true));
-					child.stdout.write(terminalTurnEnd({ message: { role: "assistant", content: [{ type: "text", text: "recovered output" }], stopReason: "stop" } }));
+					child.stdout.write(terminalTurnEnd({ message: { role: "assistant", content: [{ type: "text", text: "recovered output" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 } }));
 					child.stdout.write(agentEnd());
 					child.close(0);
 				});
@@ -1053,6 +2707,46 @@ test("runAgentTeam allows child Pi auto-retry to recover from transient assistan
 	assert.equal(inlineOutput(step).includes("partial output"), false);
 	assert.equal(step.events.some((event) => event.label === "auto-retry" && event.preview.includes("attempt 1 of 3")), true);
 	assert.equal(step.events.some((event) => event.label === "auto-retry" && event.preview.includes("succeeded")), true);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam allows overflow compaction retry to recover from transient assistant errors", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-assistant-error-compaction-${Date.now()}`), { recursive: true });
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "assistant error compaction retry",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "recover", agent: "worker", task: "compact then recover" }],
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantErrorMessage("partial output from overflow"));
+					child.stdout.write(compactionStart());
+					child.stdout.write(compactionEnd({ reason: "overflow", willRetry: true }));
+					child.stdout.write(assistantMessage("recovered output"));
+					child.stdout.write(terminalTurnEnd({ message: { role: "assistant", content: [{ type: "text", text: "recovered output" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 } }));
+					child.stdout.write(agentEnd());
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	const step = result.details.steps[0];
+	assert.equal(step.status, "succeeded");
+	assert.equal(step.errorMessage, undefined);
+	assert.equal(inlineOutput(step), "recovered output");
+	assert.equal(inlineOutput(step).includes("partial output"), false);
+	assert.equal(step.events.some((event) => event.label === "compaction" && event.preview.includes("overflow ended; will retry")), true);
 	await rm(root, { recursive: true, force: true });
 });
 
@@ -1127,14 +2821,14 @@ test("runAgentTeam preserves protocol failure over later timeout during shutdown
 	await rm(root, { recursive: true, force: true });
 });
 
-test("runAgentTeam ignores oversized late stdout coalesced after terminal stop", async () => {
+test("runAgentTeam fails on oversized late stdout coalesced after terminal stop", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-oversized-${Date.now()}`), { recursive: true });
 	const result = await runAgentTeam(
 		{
 			action: "run",
 			objective: "late oversized",
 			agents: [{ id: "worker", kind: "inline", system: "x" }],
-			steps: [{ id: "ok", agent: "worker", task: "emit late huge line" }],
+			steps: [{ id: "bad", agent: "worker", task: "emit late huge line" }],
 		},
 		{
 			cwd: root,
@@ -1153,9 +2847,136 @@ test("runAgentTeam ignores oversized late stdout coalesced after terminal stop",
 			},
 		},
 	);
-	assert.equal(result.details.steps[0].status, "succeeded");
-	assert.equal(result.details.steps[0].lateEventsIgnored, true);
-	assert.equal(result.details.steps[0].malformedStdout, false);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].lateEventsIgnored, false);
+	assert.equal(result.details.steps[0].malformedStdout, true);
+	assert.equal(result.details.steps[0].errorMessage, "Subagent stdout line exceeded JSON-mode safety limit of 1000000 characters.");
+	const saved = savedStdoutPath(result.details.steps[0]);
+	assert.notEqual(saved, undefined);
+	assert.equal(readFileSync(saved ?? "", "utf8").length, 1_000_001);
+	await rm(dirname(saved ?? root), { recursive: true, force: true });
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates oversized late stdout without waiting for newline", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-oversized-open-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late oversized open line",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "emit late huge open line" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write(`${assistantMessage("ok")}${"x".repeat(1_000_001)}`));
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].timedOut, false);
+	assert.equal(result.details.steps[0].errorMessage, "Subagent stdout line exceeded JSON-mode safety limit of 1000000 characters.");
+	const saved = savedStdoutPath(result.details.steps[0]);
+	if (saved) await rm(dirname(saved), { recursive: true, force: true });
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates separate oversized late stdout without waiting for newline", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-oversized-separate-open-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "separate late oversized open line",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "emit separate late huge open line" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write(assistantMessage("ok")));
+				setImmediate(() => child?.stdout.write("x".repeat(1_000_001)));
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].timedOut, false);
+	assert.equal(result.details.steps[0].errorMessage, "Subagent stdout line exceeded JSON-mode safety limit of 1000000 characters.");
+	const saved = savedStdoutPath(result.details.steps[0]);
+	if (saved) await rm(dirname(saved), { recursive: true, force: true });
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam terminates separate newline-terminated oversized late stdout", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-late-oversized-newline-${Date.now()}`), { recursive: true });
+	let child: FakeChild | undefined;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "late oversized newline line",
+			agents: [{ id: "worker", kind: "inline", system: "x" }],
+			steps: [{ id: "bad", agent: "worker", task: "emit late huge newline line" }],
+			limits: { timeoutSecondsPerStep: 1 },
+		},
+		{
+			cwd: root,
+			discovery: discovery(root),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: () => {
+				child = new FakeChild();
+				const originalKill = child.kill.bind(child);
+				child.kill = (signal?: NodeJS.Signals) => {
+					const accepted = originalKill(signal);
+					setTimeout(() => child?.close(null, signal ?? "SIGTERM"), 5);
+					return accepted;
+				};
+				queueMicrotask(() => child?.stdout.write(assistantMessage("ok")));
+				setImmediate(() => child?.stdout.write(`${"x".repeat(1_000_001)}\n`));
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].timedOut, false);
+	assert.equal(result.details.steps[0].errorMessage, "Subagent stdout line exceeded JSON-mode safety limit of 1000000 characters.");
+	const saved = savedStdoutPath(result.details.steps[0]);
+	if (saved) await rm(dirname(saved), { recursive: true, force: true });
+	assert.deepEqual(child?.killSignals, ["SIGTERM"]);
 	await rm(root, { recursive: true, force: true });
 });
 
@@ -1186,7 +3007,9 @@ test("runAgentTeam rejects newline-terminated oversized JSON stdout lines", asyn
 		},
 	);
 	assert.equal(result.details.steps[0].status, "failed");
-	assert.equal(result.details.steps[0].errorMessage, "Subagent JSON stdout line exceeded 1000000 characters.");
+	assert.equal(result.details.steps[0].errorMessage, "Subagent stdout line exceeded JSON-mode safety limit of 1000000 characters.");
+	const saved = savedStdoutPath(result.details.steps[0]);
+	if (saved) await rm(dirname(saved), { recursive: true, force: true });
 	await rm(root, { recursive: true, force: true });
 });
 

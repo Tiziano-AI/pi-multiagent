@@ -111,7 +111,8 @@ const result = await runAgentTeam(
 			});
 			child.stdin.on("end", () => tasks.push(task));
 			queueMicrotask(() => {
-				child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "smoke-ok" }], stopReason: "stop" } })}\n`);
+				child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "user", content: [{ type: "text", text: "smoke task" }], timestamp: 1 } })}\n`);
+				child.stdout.write(`${JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "smoke-ok" }], api: "fake-api", provider: "fake-provider", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, model: "fake-model", stopReason: "stop", timestamp: 1 } })}\n`);
 				child.close(0);
 			});
 			return child;

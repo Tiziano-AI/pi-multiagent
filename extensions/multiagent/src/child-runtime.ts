@@ -1,13 +1,20 @@
 /** Child Pi JSON-mode process runtime and stream handling. */
 
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { appendDiagnostic, appendStderr, applyJsonEvent, markMalformedStdout, noteFailureCause, parseJsonRecordLine } from "./json-events.ts";
+import { hasDefinitelyMalformedJsonObjectPrefix } from "./json-prefix.ts";
+import { trimJsonWhitespace, trimStartJsonWhitespace } from "./json-whitespace.ts";
 import { buildPiArgs, getPiInvocation, type SpawnProcess } from "./child-launch.ts";
-import { MAX_STDOUT_LINE_CHARS, isRecord } from "./types.ts";
+import { classifyPostTerminalLifecycle, createPostTerminalLifecycleState, finishPostTerminalLifecycleState, type PostTerminalLifecycleState } from "./post-terminal-lifecycle.ts";
+import { MAX_JSON_STDOUT_LINE_CHARS, MAX_STDOUT_LINE_CHARS } from "./types.ts";
 import type { AgentInvocationDefaults, AgentRunResult, ResolvedAgent, TeamLimits } from "./types.ts";
 
 const SIGKILL_CONFIRM_MS = 500;
 const SIGTERM_GRACE_MS = 5_000;
+const UNDELIMITED_JSON_GRACE_MS = 250;
 
 export interface ProcessOutcome {
 	exitCode: number | undefined;
@@ -39,17 +46,24 @@ export async function spawnPiJson(options: {
 		let firstCause: "abort" | "timeout" | undefined;
 		let killTimer: ReturnType<typeof setTimeout> | undefined;
 		let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+		let undelimitedJsonTimer: ReturnType<typeof setTimeout> | undefined;
 		let terminating = false;
 		let failureTerminating = false;
 		const stdoutDecoder = new StringDecoder("utf8");
 		const stderrDecoder = new StringDecoder("utf8");
 		const postTerminalLifecycle = createPostTerminalLifecycleState();
+		const clearUndelimitedJsonTimer = () => {
+			if (!undelimitedJsonTimer) return;
+			clearTimeout(undelimitedJsonTimer);
+			undelimitedJsonTimer = undefined;
+		};
 		const settle = (exitCode: number | undefined, exitSignal: string | undefined, closeout: string | undefined = undefined) => {
 			if (settled) return;
 			settled = true;
 			options.signal?.removeEventListener("abort", onAbort);
 			if (killTimer) clearTimeout(killTimer);
 			if (timeoutTimer) clearTimeout(timeoutTimer);
+			clearUndelimitedJsonTimer();
 			resolveExit({ exitCode, exitSignal, aborted: firstCause === "abort", timedOut: firstCause === "timeout", failureTerminated: failureTerminating, launched: true, closeout });
 		};
 		const invocation = getPiInvocation(args, options.cwd);
@@ -92,45 +106,116 @@ export async function spawnPiJson(options: {
 			terminate();
 			return true;
 		};
+		const scheduleUndelimitedJsonFailure = () => {
+			if (undelimitedJsonTimer) return;
+			undelimitedJsonTimer = setTimeout(() => {
+				undelimitedJsonTimer = undefined;
+				if (settled || firstCause || failureTerminating || buffer.length === 0 || !parseJsonRecordLine(buffer)) return;
+				if (options.result.protocolTerminal) {
+					if (markLateStdout(options.result)) options.onPartial();
+				} else {
+					markMalformedStdout(options.result, buffer);
+					options.onPartial();
+				}
+				if (buffer.length > MAX_STDOUT_LINE_CHARS) persistOversizedStdout(options.result, buffer);
+				buffer = "";
+				terminateForProtocolFailure();
+			}, UNDELIMITED_JSON_GRACE_MS);
+		};
 		const processStdoutText = (text: string) => {
 			if (settled || firstCause || failureTerminating || text.length === 0) return;
 			if (options.result.protocolTerminal) {
 				buffer += text;
 				let terminalNewline = buffer.indexOf("\n");
 				while (terminalNewline !== -1) {
+					clearUndelimitedJsonTimer();
 					const line = buffer.slice(0, terminalNewline);
 					buffer = buffer.slice(terminalNewline + 1);
-					processJsonLine(line, options.result, options.onPartial, postTerminalLifecycle);
+					processStdoutLine(line, options.result, options.onPartial, postTerminalLifecycle);
 					if (settled || firstCause || terminateForProtocolFailure()) return;
 					terminalNewline = buffer.indexOf("\n");
 				}
-				if (buffer.length > MAX_STDOUT_LINE_CHARS) {
-					if (noteLateStdout(options.result)) options.onPartial();
+				if (shouldFailOversizedPendingBuffer(buffer)) {
+					markOversizedStdoutLine(options.result, buffer);
+					options.onPartial();
 					buffer = "";
+					terminateForProtocolFailure();
+					return;
 				}
+				const pending = trimStartJsonWhitespace(buffer);
+				if (pending.length > 0 && !pending.startsWith("{")) {
+					if (markLateStdout(options.result)) options.onPartial();
+					buffer = "";
+					terminateForProtocolFailure();
+					return;
+				}
+				if (hasDefinitelyMalformedJsonObjectPrefix(pending)) {
+					if (markLateStdout(options.result)) options.onPartial();
+					buffer = "";
+					terminateForProtocolFailure();
+				} else if (parseJsonRecordLine(buffer)) scheduleUndelimitedJsonFailure();
 				return;
 			}
 			buffer += text;
 			let newline = buffer.indexOf("\n");
-			if (newline === -1 && buffer.length > MAX_STDOUT_LINE_CHARS) {
-				markOversizedStdoutLine(options.result);
+			if (newline === -1 && shouldFailOversizedPendingBuffer(buffer)) {
+				markOversizedStdoutLine(options.result, buffer);
 				options.onPartial();
+				buffer = "";
 				terminateForProtocolFailure();
 				return;
 			}
 			while (newline !== -1) {
+				clearUndelimitedJsonTimer();
 				const line = buffer.slice(0, newline);
 				buffer = buffer.slice(newline + 1);
-				if (!options.result.protocolTerminal && line.length > MAX_STDOUT_LINE_CHARS) {
-					markOversizedStdoutLine(options.result);
-					options.onPartial();
-					terminateForProtocolFailure();
-					return;
-				}
-				processJsonLine(line, options.result, options.onPartial, postTerminalLifecycle);
+				processStdoutLine(line, options.result, options.onPartial, postTerminalLifecycle);
 				if (settled || firstCause || terminateForProtocolFailure()) return;
 				newline = buffer.indexOf("\n");
 			}
+			if (options.result.protocolTerminal) {
+				if (shouldFailOversizedPendingBuffer(buffer)) {
+					markOversizedStdoutLine(options.result, buffer);
+					options.onPartial();
+					buffer = "";
+					terminateForProtocolFailure();
+					return;
+				}
+				const pendingTerminal = trimStartJsonWhitespace(buffer);
+				if (pendingTerminal.length > 0 && !pendingTerminal.startsWith("{")) {
+					if (markLateStdout(options.result)) options.onPartial();
+					buffer = "";
+					terminateForProtocolFailure();
+					return;
+				}
+				if (hasDefinitelyMalformedJsonObjectPrefix(pendingTerminal)) {
+					if (markLateStdout(options.result)) options.onPartial();
+					buffer = "";
+					terminateForProtocolFailure();
+				} else if (parseJsonRecordLine(buffer)) scheduleUndelimitedJsonFailure();
+				return;
+			}
+			if (shouldFailOversizedPendingBuffer(buffer)) {
+				markOversizedStdoutLine(options.result, buffer);
+				options.onPartial();
+				buffer = "";
+				terminateForProtocolFailure();
+				return;
+			}
+			const pending = trimStartJsonWhitespace(buffer);
+			if (pending.length > 0 && !pending.startsWith("{")) {
+				markMalformedStdout(options.result, buffer);
+				options.onPartial();
+				buffer = "";
+				terminateForProtocolFailure();
+				return;
+			}
+			if (hasDefinitelyMalformedJsonObjectPrefix(pending)) {
+				markMalformedStdout(options.result, buffer);
+				options.onPartial();
+				buffer = "";
+				terminateForProtocolFailure();
+			} else if (parseJsonRecordLine(buffer)) scheduleUndelimitedJsonFailure();
 		};
 		if (options.signal?.aborted) onAbort();
 		else options.signal?.addEventListener("abort", onAbort, { once: true });
@@ -204,49 +289,94 @@ export async function spawnPiJson(options: {
 			settle(undefined, undefined);
 		});
 		child.on("close", (code, closeSignal) => {
+			clearUndelimitedJsonTimer();
 			if (!settled && !firstCause && !failureTerminating) {
 				processStdoutText(stdoutDecoder.end());
 				const stderrRest = stderrDecoder.end();
 				if (stderrRest.length > 0) appendStderr(options.result, stderrRest);
-				if (buffer.trim().length > 0) processJsonLine(buffer, options.result, options.onPartial, postTerminalLifecycle);
+				if (buffer.length > MAX_STDOUT_LINE_CHARS) {
+					markOversizedStdoutLine(options.result, buffer);
+					options.onPartial();
+				} else if (trimJsonWhitespace(buffer).length > 0) {
+					if (options.result.protocolTerminal) {
+						if (markLateStdout(options.result)) options.onPartial();
+					} else {
+						markMalformedStdout(options.result, buffer);
+						options.onPartial();
+					}
+				}
+				const lifecycleError = finishPostTerminalLifecycleState(postTerminalLifecycle);
+				if (lifecycleError) {
+					markPostTerminalProtocolError(options.result, lifecycleError);
+					options.onPartial();
+				}
 			}
 			settle(code ?? undefined, closeSignal ?? undefined);
 		});
 	});
 }
 
+function shouldFailOversizedPendingBuffer(buffer: string): boolean {
+	if (buffer.length <= MAX_STDOUT_LINE_CHARS) return false;
+	const pending = trimStartJsonWhitespace(buffer);
+	if (!pending.startsWith("{")) return true;
+	if (buffer.length > MAX_JSON_STDOUT_LINE_CHARS) return true;
+	return hasDefinitelyMalformedJsonObjectPrefix(pending);
+}
+
+function processStdoutLine(line: string, result: AgentRunResult, emit: () => void, postTerminalLifecycle: PostTerminalLifecycleState): void {
+	if (line.length <= MAX_STDOUT_LINE_CHARS) {
+		processJsonLine(line, result, emit, postTerminalLifecycle);
+		return;
+	}
+	const record = line.length <= MAX_JSON_STDOUT_LINE_CHARS && trimStartJsonWhitespace(line).startsWith("{") ? parseJsonRecordLine(line) : undefined;
+	if (!record) {
+		markOversizedStdoutLine(result, line);
+		emit();
+		return;
+	}
+	const wasMalformed = result.malformedStdout;
+	processJsonLine(line, result, emit, postTerminalLifecycle, record);
+	if (!wasMalformed && result.malformedStdout) persistOversizedStdout(result, line);
+}
+
 function shouldTerminateForProtocolFailure(result: AgentRunResult): boolean {
+	if (result.malformedStdout) return true;
 	if (result.errorMessage?.startsWith("Subagent assistant output artifact persistence failed:")) return true;
-	if (result.errorMessage?.startsWith("Subagent JSON stdout line exceeded")) return true;
-	if (result.errorMessage?.startsWith("Subagent emitted invalid post-terminal lifecycle event:")) return true;
 	if (result.errorMessage === "Subagent emitted malformed assistant message_end event.") return true;
-	if (result.malformedStdout && !result.protocolTerminal) return true;
+	if (result.errorMessage === "Subagent assistant message_end omitted a success stopReason.") return true;
+	if (result.errorMessage?.startsWith("Subagent ended with non-success stop reason ")) return true;
 	return false;
 }
 
-function markOversizedStdoutLine(result: AgentRunResult): void {
+function markOversizedStdoutLine(result: AgentRunResult, text: string): void {
+	const message = `Subagent stdout line exceeded JSON-mode safety limit of ${MAX_STDOUT_LINE_CHARS} characters.`;
 	result.malformedStdout = true;
-	result.errorMessage = result.errorMessage ?? `Subagent JSON stdout line exceeded ${MAX_STDOUT_LINE_CHARS} characters.`;
+	result.errorMessage = result.errorMessage ?? message;
 	noteFailureCause(result, result.errorMessage);
-	appendDiagnostic(result, result.errorMessage);
+	appendDiagnostic(result, message);
+	persistOversizedStdout(result, text);
 }
 
-interface PostTerminalLifecycleState {
-	sawTurnEnd: boolean;
-	sawAgentEnd: boolean;
+function persistOversizedStdout(result: AgentRunResult, text: string): void {
+	try {
+		const dir = mkdtempSync(join(tmpdir(), "pi-multiagent-stdout-"));
+		const filePath = join(dir, `${result.id}-stdout.txt`);
+		writeFileSync(filePath, text, { encoding: "utf8", mode: 0o600 });
+		appendDiagnostic(result, `Oversized child stdout saved: ${filePath}`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		appendDiagnostic(result, `Failed to save oversized child stdout: ${message}`);
+	}
 }
 
-function createPostTerminalLifecycleState(): PostTerminalLifecycleState {
-	return { sawTurnEnd: false, sawAgentEnd: false };
-}
-
-function processJsonLine(line: string, result: AgentRunResult, emit: () => void, postTerminalLifecycle: PostTerminalLifecycleState): void {
-	const record = parseJsonRecordLine(line);
+function processJsonLine(line: string, result: AgentRunResult, emit: () => void, postTerminalLifecycle: PostTerminalLifecycleState, parsedRecord?: Record<string, unknown>): void {
+	const record = parsedRecord ?? parseJsonRecordLine(line);
 	if (result.protocolTerminal) {
 		if (record) {
 			const lifecycle = classifyPostTerminalLifecycle(record, postTerminalLifecycle);
 			if (lifecycle.accepted) {
-				if (applyJsonEvent(result, record)) emit();
+				if (applyJsonEvent(result, record, { postTerminalLifecycleAccepted: true })) emit();
 				return;
 			}
 			if (lifecycle.errorMessage) {
@@ -255,54 +385,15 @@ function processJsonLine(line: string, result: AgentRunResult, emit: () => void,
 				return;
 			}
 		}
-		if (line.trim().length > 0 && noteLateStdout(result)) emit();
+		if (trimJsonWhitespace(line).length > 0 && markLateStdout(result)) emit();
 		return;
 	}
 	if (!record) {
-		if (line.trim().length > 0) markMalformedStdout(result, line);
+		if (trimJsonWhitespace(line).length > 0) markMalformedStdout(result, line);
 		emit();
 		return;
 	}
 	if (applyJsonEvent(result, record)) emit();
-}
-
-function classifyPostTerminalLifecycle(record: Record<string, unknown>, state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
-	if (record.type === "auto_retry_end") return classifyPostTerminalAutoRetryEnd(record, state);
-	if (record.type === "turn_end") return classifyPostTerminalTurnEnd(record, state);
-	if (record.type === "agent_end") return classifyPostTerminalAgentEnd(state);
-	return { accepted: false, errorMessage: undefined };
-}
-
-function classifyPostTerminalAutoRetryEnd(record: Record<string, unknown>, state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
-	if (state.sawAgentEnd) return rejectedPostTerminalLifecycle("auto_retry_end after agent_end");
-	if (record.success !== true) return rejectedPostTerminalLifecycle("auto_retry_end did not report success");
-	return { accepted: true, errorMessage: undefined };
-}
-
-function classifyPostTerminalTurnEnd(record: Record<string, unknown>, state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
-	if (state.sawAgentEnd) return rejectedPostTerminalLifecycle("turn_end after agent_end");
-	if (state.sawTurnEnd) return rejectedPostTerminalLifecycle("duplicate turn_end");
-	const message = record.message;
-	if (!isRecord(message)) return rejectedPostTerminalLifecycle("turn_end missing assistant message");
-	if (message.role !== "assistant") return rejectedPostTerminalLifecycle("turn_end message is not assistant role");
-	if (message.stopReason !== "stop") return rejectedPostTerminalLifecycle("turn_end stopReason is not stop");
-	if (message.errorMessage !== undefined) return rejectedPostTerminalLifecycle("turn_end message includes errorMessage");
-	const toolResults = record.toolResults;
-	if (!Array.isArray(toolResults)) return rejectedPostTerminalLifecycle("turn_end missing toolResults array");
-	if (toolResults.length !== 0) return rejectedPostTerminalLifecycle("turn_end has post-terminal tool results");
-	state.sawTurnEnd = true;
-	return { accepted: true, errorMessage: undefined };
-}
-
-function classifyPostTerminalAgentEnd(state: PostTerminalLifecycleState): { accepted: boolean; errorMessage: string | undefined } {
-	if (state.sawAgentEnd) return rejectedPostTerminalLifecycle("duplicate agent_end");
-	if (!state.sawTurnEnd) return rejectedPostTerminalLifecycle("agent_end before turn_end");
-	state.sawAgentEnd = true;
-	return { accepted: true, errorMessage: undefined };
-}
-
-function rejectedPostTerminalLifecycle(reason: string): { accepted: boolean; errorMessage: string } {
-	return { accepted: false, errorMessage: `Subagent emitted invalid post-terminal lifecycle event: ${reason}.` };
 }
 
 function markPostTerminalProtocolError(result: AgentRunResult, message: string): void {
@@ -312,9 +403,13 @@ function markPostTerminalProtocolError(result: AgentRunResult, message: string):
 	appendDiagnostic(result, message);
 }
 
-function noteLateStdout(result: AgentRunResult): boolean {
+function markLateStdout(result: AgentRunResult): boolean {
 	if (result.lateEventsIgnored) return false;
+	const message = "Subagent emitted stdout after terminal assistant message_end.";
 	result.lateEventsIgnored = true;
-	appendDiagnostic(result, "Ignored child stdout after terminal assistant message_end.");
+	result.malformedStdout = true;
+	result.errorMessage = result.errorMessage ?? message;
+	noteFailureCause(result, result.errorMessage);
+	appendDiagnostic(result, message);
 	return true;
 }

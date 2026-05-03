@@ -6,17 +6,17 @@ import {
 	STDERR_PREVIEW_CHARS,
 	createEmptyUsage,
 	isRecord,
-	type AgentMessageLike,
 	type AgentRunResult,
 	type AgentSource,
 	type AgentStatus,
-	type ContentBlock,
 	type FailureProvenance,
 	type TeamEvent,
-	type UsageStats,
 } from "./types.ts";
 import { appendAssistantOutput, createStepAssistantOutput, setAssistantOutput } from "./assistant-output.ts";
 import { formatFailureProvenance } from "./failure-provenance.ts";
+import { addUsage, getText, readMessage } from "./message-shape.ts";
+import { isAgentMessageShape } from "./post-terminal-lifecycle.ts";
+import { trimJsonWhitespace } from "./json-whitespace.ts";
 
 interface RunCompletionState {
 	aborted: boolean;
@@ -25,6 +25,10 @@ interface RunCompletionState {
 	failureTerminated?: boolean;
 	launched?: boolean;
 	closeout?: string;
+}
+
+interface ApplyJsonEventOptions {
+	postTerminalLifecycleAccepted?: boolean;
 }
 
 export function createRunResult(input: {
@@ -72,7 +76,7 @@ export function createRunResult(input: {
 }
 
 export function parseJsonRecordLine(line: string): Record<string, unknown> | undefined {
-	const trimmed = line.trim();
+	const trimmed = trimJsonWhitespace(line);
 	if (trimmed.length === 0) return undefined;
 	let parsed: unknown;
 	try {
@@ -83,9 +87,9 @@ export function parseJsonRecordLine(line: string): Record<string, unknown> | und
 	return isRecord(parsed) ? parsed : undefined;
 }
 
-export function applyJsonEvent(result: AgentRunResult, event: Record<string, unknown>): boolean {
+export function applyJsonEvent(result: AgentRunResult, event: Record<string, unknown>, options: ApplyJsonEventOptions = {}): boolean {
 	const eventType = typeof event.type === "string" ? event.type : undefined;
-	if (result.protocolTerminal && isPostTerminalEvent(eventType)) return noteLateEvent(result);
+	if (result.protocolTerminal && (!options.postTerminalLifecycleAccepted || isUnexpectedPostTerminalEvent(eventType))) return noteLateEvent(result);
 	if (eventType === "tool_execution_start") {
 		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
 		appendEvent(result, { type: "tool", label: toolName, preview: formatToolPreview(event.args), status: "running" });
@@ -108,11 +112,15 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 	if (eventType === "auto_retry_end") return appendLifecycleEvent(result, "auto-retry", event.success === true ? "succeeded" : readEventText(event.finalError, "failed"), event.success === true ? "done" : "error");
 	if (eventType === "compaction_start") return appendLifecycleEvent(result, "compaction", `${readEventText(event.reason, "unknown")} started`, "running");
 	if (eventType === "compaction_end") {
-		const status = event.aborted === true || event.errorMessage ? "error" : "done";
-		const retry = event.willRetry === true ? "; will retry" : "";
-		return appendLifecycleEvent(result, "compaction", `${readEventText(event.reason, "unknown")} ended${retry}${event.errorMessage ? `: ${String(event.errorMessage)}` : ""}`, status);
+		const failed = event.aborted === true || event.errorMessage !== undefined;
+		const retrying = event.willRetry === true;
+		if (result.protocolTerminal && retrying) return noteLateEvent(result);
+		if (!failed && retrying) resetTransientAssistantFailure(result);
+		if (failed) setErrorMessage(result, "Compaction failed");
+		return appendLifecycleEvent(result, "compaction", `${readEventText(event.reason, "unknown")} ended${retrying ? "; will retry" : ""}${event.errorMessage ? `: ${String(event.errorMessage)}` : ""}`, failed ? "error" : "done");
 	}
 	if (eventType === "message_update") {
+		if (result.stopReason === "toolUse") return true;
 		const update = isRecord(event.assistantMessageEvent) ? event.assistantMessageEvent : undefined;
 		if (update?.type === "text_delta" && typeof update.delta === "string") {
 			const artifactError = appendAssistantOutput(result, update.delta);
@@ -121,43 +129,45 @@ export function applyJsonEvent(result: AgentRunResult, event: Record<string, unk
 		}
 	}
 	if (eventType === "message_end") {
-		const message = readMessage(event.message);
-		if (!message) {
-			result.malformedStdout = true;
+		const raw = event.message;
+		if (!isRecord(raw) || typeof raw.role !== "string") return noteMalformedMessageEnd(result);
+		if (raw.role !== "assistant") return isAgentMessageShape(raw) ? false : noteMalformedMessageEnd(result);
+		const message = readMessage(raw);
+		if (!message) return noteMalformedMessageEnd(result);
+		result.sawAssistantMessageEnd = true;
+		const stopReason = message.stopReason;
+		const childError = message.errorMessage;
+		if (!stopReason || stopReason === "toolUse") result.assistantOutput = createStepAssistantOutput();
+		else if (stopReason === "stop") {
+			const artifactError = setAssistantOutput(result, getText(message.content));
+			if (artifactError) setErrorMessage(result, artifactError);
+		} else if (stopReason && result.assistantOutput.chars === 0) {
+			const artifactError = setAssistantOutput(result, getText(message.content));
+			if (artifactError) setErrorMessage(result, artifactError);
+		}
+		addUsage(result.usage, message.usage);
+		result.usage.turns += 1;
+		result.model = message.model ?? result.model;
+		if (!stopReason) {
 			result.protocolTerminal = true;
+			result.malformedStdout = true;
 			if (result.stopReason === "stop" || result.stopReason === "toolUse") result.stopReason = undefined;
-			setErrorMessage(result, "Subagent emitted malformed assistant message_end event.");
-			return true;
+			setErrorMessage(result, "Subagent assistant message_end omitted a success stopReason.");
+		} else if (childError) {
+			setErrorMessage(result, `Subagent assistant error: ${childError}`);
+			result.stopReason = stopReason;
+			result.protocolTerminal = false;
+		} else if (stopReason === "toolUse") result.stopReason = stopReason;
+		else if (stopReason === "stop" && !result.errorMessage) {
+			result.stopReason = stopReason;
+			result.protocolTerminal = true;
+		} else {
+			result.stopReason = stopReason;
+			result.protocolTerminal = true;
+			setErrorMessage(result, `Subagent ended with non-success stop reason ${stopReason}.`);
 		}
-		if (message.role === "assistant") {
-			result.sawAssistantMessageEnd = true;
-			if (result.assistantOutput.chars === 0) {
-				const text = getText(message.content);
-				const artifactError = setAssistantOutput(result, text);
-				if (artifactError) setErrorMessage(result, artifactError);
-			}
-			addUsage(result.usage, message.usage);
-			result.usage.turns += 1;
-			result.model = message.model ?? result.model;
-			const stopReason = message.stopReason;
-			const childError = message.errorMessage;
-			if (childError) setErrorMessage(result, `Subagent assistant error: ${childError}`);
-			if (!stopReason) {
-				result.protocolTerminal = true;
-				if (result.stopReason === "stop" || result.stopReason === "toolUse") result.stopReason = undefined;
-				setErrorMessage(result, "Subagent assistant message_end omitted a success stopReason.");
-			} else if (stopReason === "toolUse" && !childError) result.stopReason = stopReason;
-			else if (stopReason === "stop" && !result.errorMessage) {
-				result.stopReason = stopReason;
-				result.protocolTerminal = true;
-			} else {
-				result.stopReason = stopReason;
-				result.protocolTerminal = childError ? false : true;
-				if (!childError) setErrorMessage(result, `Subagent ended with non-success stop reason ${stopReason}.`);
-			}
-			if (childError) appendDiagnostic(result, `Subagent assistant error reported: ${childError}`);
-			return true;
-		}
+		if (childError) appendDiagnostic(result, `Subagent assistant error reported: ${childError}`);
+		return true;
 	}
 	return false;
 }
@@ -203,13 +213,14 @@ export function setOutputCapture(result: AgentRunResult, text: string): void {
 }
 
 function resetTransientAssistantFailure(result: AgentRunResult): void {
+	const preserveToolUseLatch = result.stopReason === "toolUse";
 	result.assistantOutput = createStepAssistantOutput();
 	result.errorMessage = undefined;
 	result.failureCause = undefined;
 	result.failureProvenance = undefined;
-	result.stopReason = undefined;
+	result.stopReason = preserveToolUseLatch ? "toolUse" : undefined;
 	result.protocolTerminal = false;
-	result.sawAssistantMessageEnd = false;
+	result.sawAssistantMessageEnd = preserveToolUseLatch;
 	result.lateEventsIgnored = false;
 }
 
@@ -250,14 +261,24 @@ function capEventPreview(event: TeamEvent): TeamEvent {
 	return { ...event, preview: `${event.preview.slice(0, Math.max(0, EVENT_PREVIEW_CHARS - marker.length))}${marker}` };
 }
 
-function isPostTerminalEvent(eventType: string | undefined): boolean {
-	return eventType === "message_update" || eventType === "message_end" || eventType === "tool_execution_start" || eventType === "tool_execution_end";
+function isUnexpectedPostTerminalEvent(eventType: string | undefined): boolean {
+	return !["turn_end", "agent_end", "auto_retry_end", "compaction_start", "compaction_end"].includes(eventType ?? "");
 }
 
 function noteLateEvent(result: AgentRunResult): boolean {
 	if (result.lateEventsIgnored) return false;
 	result.lateEventsIgnored = true;
-	appendDiagnostic(result, "Ignored child JSON event after terminal assistant message_end.");
+	const message = "Subagent emitted JSON event after terminal assistant message_end.";
+	setErrorMessage(result, message);
+	appendDiagnostic(result, message);
+	return true;
+}
+
+function noteMalformedMessageEnd(result: AgentRunResult): boolean {
+	result.malformedStdout = true;
+	result.protocolTerminal = true;
+	if (result.stopReason === "stop" || result.stopReason === "toolUse") result.stopReason = undefined;
+	setErrorMessage(result, "Subagent emitted malformed assistant message_end event.");
 	return true;
 }
 
@@ -382,72 +403,5 @@ export function isFailedResult(result: AgentRunResult): boolean {
 
 export function isTerminalResult(result: AgentRunResult): boolean {
 	return result.status !== "pending" && result.status !== "running";
-}
-
-function readMessage(value: unknown): AgentMessageLike | undefined {
-	if (!isRecord(value) || typeof value.role !== "string" || !Array.isArray(value.content)) return undefined;
-	const content = readContent(value.content);
-	if (!content) return undefined;
-	return {
-		role: value.role,
-		content,
-		usage: readUsage(value.usage),
-		model: typeof value.model === "string" ? value.model : undefined,
-		stopReason: typeof value.stopReason === "string" ? value.stopReason : undefined,
-		errorMessage: typeof value.errorMessage === "string" ? value.errorMessage : undefined,
-	};
-}
-
-function readContent(value: unknown[]): ContentBlock[] | undefined {
-	const content: ContentBlock[] = [];
-	for (const item of value) {
-		if (!isRecord(item) || typeof item.type !== "string") return undefined;
-		if (item.type === "text") {
-			if (typeof item.text !== "string") return undefined;
-			content.push({ type: "text", text: item.text });
-			continue;
-		}
-		if (item.type === "toolCall") {
-			if (typeof item.name !== "string" || !isRecord(item.arguments)) return undefined;
-			content.push({ type: "toolCall", name: item.name, arguments: item.arguments });
-			continue;
-		}
-	}
-	return content;
-}
-
-function readUsage(value: unknown): UsageStats | undefined {
-	if (!isRecord(value)) return undefined;
-	const cost = isRecord(value.cost) && typeof value.cost.total === "number" ? value.cost.total : 0;
-	return {
-		input: readNumber(value.input),
-		output: readNumber(value.output),
-		cacheRead: readNumber(value.cacheRead),
-		cacheWrite: readNumber(value.cacheWrite),
-		cost,
-		contextTokens: readNumber(value.totalTokens),
-		turns: 0,
-	};
-}
-
-function readNumber(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-function addUsage(target: UsageStats, update: UsageStats | undefined): void {
-	if (!update) return;
-	target.input += update.input;
-	target.output += update.output;
-	target.cacheRead += update.cacheRead;
-	target.cacheWrite += update.cacheWrite;
-	target.cost += update.cost;
-	target.contextTokens = Math.max(target.contextTokens, update.contextTokens);
-}
-
-function getText(content: ContentBlock[]): string {
-	return content
-		.filter((item): item is Extract<ContentBlock, { type: "text" }> => item.type === "text")
-		.map((item) => item.text)
-		.join("\n\n");
 }
 

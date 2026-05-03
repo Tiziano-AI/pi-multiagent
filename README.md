@@ -307,7 +307,8 @@ The model-facing aggregate output is capped at 2000 lines or 50KB. When possible
 | Graph file input | Relative `.json` file inside cwd; 256 KiB max |
 | Retained step events | 40 |
 | Per-event preview | 2000 chars |
-| JSON stdout line buffer | 1000000 chars |
+| Non-JSON stdout safety line | 1000000 chars; larger invalid stdout is failed closed and saved to a temp evidence file when possible |
+| Valid JSON stdout record parse cap | 67108864 chars |
 
 `limits.timeoutSecondsPerStep` defaults to 7200 seconds. Raise it for broad review, implementation, untrusted work, bash-using work, release work, or other tool-using runs rather than setting short values.
 
