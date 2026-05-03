@@ -730,7 +730,14 @@ test("post-terminal lifecycle classifier rejects orphan and malformed compaction
 	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, malformed).accepted, true);
 	assert.equal(classifyPostTerminalLifecycle({ type: "agent_end", messages: [] }, malformed).accepted, true);
 	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_start", reason: "threshold" }, malformed).accepted, true);
-	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_end", reason: "threshold", result: {}, aborted: "false", willRetry: false }, malformed).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: compaction_end aborted flag is malformed.");
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_start", reason: "threshold" }, malformed).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: duplicate compaction_start.");
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_end", reason: "threshold", result: {}, aborted: true, willRetry: false }, malformed).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: compaction_end reported abort.");
+
+	const malformedEnd = createPostTerminalLifecycleState();
+	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, malformedEnd).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "agent_end", messages: [] }, malformedEnd).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_start", reason: "threshold" }, malformedEnd).accepted, true);
+	assert.equal(classifyPostTerminalLifecycle({ type: "compaction_end", reason: "threshold", result: {}, aborted: "false", willRetry: false }, malformedEnd).errorMessage, "Subagent emitted invalid post-terminal lifecycle event: compaction_end aborted flag is malformed.");
 
 	const nonFiniteAgentEnd = createPostTerminalLifecycleState();
 	assert.equal(classifyPostTerminalLifecycle({ type: "turn_end", message: assistantPayload([{ type: "text", text: "done" }]), toolResults: [] }, nonFiniteAgentEnd).accepted, true);

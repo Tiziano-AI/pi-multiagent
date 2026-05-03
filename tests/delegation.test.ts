@@ -1352,9 +1352,19 @@ test("runAgentTeam fails closed on invalid post-terminal lifecycle", async () =>
 			reason: "compaction_end before compaction_start",
 		},
 		{
+			name: "duplicate post-terminal compaction start",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), compactionStart()],
+			reason: "duplicate compaction_start",
+		},
+		{
 			name: "failed post-terminal compaction end",
 			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), compactionEnd({ errorMessage: "bad" })],
 			reason: "compaction_end reported error",
+		},
+		{
+			name: "aborted post-terminal compaction end",
+			lines: [terminalTurnEnd(), agentEnd(), compactionStart(), compactionEnd({ aborted: true })],
+			reason: "compaction_end reported abort",
 		},
 		{
 			name: "post-terminal compaction retry",
