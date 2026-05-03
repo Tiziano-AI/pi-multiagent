@@ -81,6 +81,16 @@ test("discoverAgents rejects library self-declared extension tool grants", async
 	await rm(root, { recursive: true, force: true });
 });
 
+test("discoverAgents rejects library self-declared caller skill inheritance", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-caller-skills-frontmatter-"));
+	const packageDir = join(root, "package-agents");
+	await makeAgent(packageDir, "skilled.md", "---\nname: skilled\ndescription: skilled agent\ncallerSkills: none\n---\nNope");
+	const discovery = discoverAgents({ cwd: root, packageAgentsDir: packageDir, library: normalizeLibraryOptions({ sources: ["package"] }) });
+	assert.equal(discovery.agents.length, 0);
+	assert.equal(discovery.diagnostics.some((item) => item.code === "agent-caller-skills-denied"), true);
+	await rm(root, { recursive: true, force: true });
+});
+
 test("discoverAgents reports duplicate source refs only", async () => {
 	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-duplicate-refs-"));
 	const packageDir = join(root, "package-agents");

@@ -87,6 +87,15 @@ function readAgentFile(filePath: string, source: Exclude<LibrarySource, never>, 
 		});
 		return undefined;
 	}
+	if (parsed.frontmatter.callerSkills !== undefined) {
+		diagnostics.push({
+			code: "agent-caller-skills-denied",
+			path: filePath,
+			message: `Library agent ${source}:${name} cannot self-declare callerSkills; inherit or curate caller skills in the agent_team invocation.`,
+			severity: "warning",
+		});
+		return undefined;
+	}
 	const thinking = parsed.frontmatter.thinking;
 	if (thinking && !VALID_THINKING.has(thinking)) {
 		diagnostics.push({

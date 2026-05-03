@@ -24,9 +24,10 @@ test("materializeAgentTeamInput rejects graphFile mixed with inline run fields",
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-graph-file-mixed-${Date.now()}`), { recursive: true });
 	try {
 		await writeFile(join(root, "graph.json"), JSON.stringify({ action: "run", objective: "from file", steps: [{ id: "one", agent: "package:reviewer", task: "review" }] }), "utf8");
-		const materialized = materializeAgentTeamInput({ action: "run", graphFile: "graph.json", objective: "inline", extensionToolPolicy: { localExtensions: "allow" }, steps: [{ id: "inline", agent: "package:reviewer", task: "review" }] }, root);
+		const materialized = materializeAgentTeamInput({ action: "run", graphFile: "graph.json", objective: "inline", extensionToolPolicy: { localExtensions: "allow" }, callerSkills: "none", steps: [{ id: "inline", agent: "package:reviewer", task: "review" }] }, root);
 		assert.equal(materialized.input.graphFile, "graph.json");
 		assert.equal(materialized.diagnostics.some((item) => item.code === "graph-file-inline-fields-denied" && item.message.includes("extensionToolPolicy")), true);
+		assert.equal(materialized.diagnostics.some((item) => item.code === "graph-file-inline-fields-denied" && item.message.includes("callerSkills")), true);
 	} finally {
 		await rm(root, { recursive: true, force: true });
 	}
@@ -60,7 +61,7 @@ test("materializeAgentTeamInput schema-validates graphFile contents", async () =
 		await writeFile(join(root, "retired.json"), JSON.stringify({ action: "run", objective: "retired", steps: [{ id: "one", agent: "package:reviewer", task: "review", upstream: { mode: "full" } }] }), "utf8");
 		await writeFile(join(root, "dependency-bounds.json"), JSON.stringify({ action: "run", objective: "bounds", steps: [{ id: "one", agent: "package:reviewer", task: "review", needs: Array.from({ length: MAX_DEPENDENCIES_PER_STEP + 1 }, () => "dep") }] }), "utf8");
 		await writeFile(join(root, "timeout-bounds.json"), JSON.stringify({ action: "run", objective: "bounds", steps: [{ id: "one", agent: "package:reviewer", task: "review" }], limits: { timeoutSecondsPerStep: 0 } }), "utf8");
-		await writeFile(join(root, "extension-tools.json"), JSON.stringify({ action: "run", objective: "extension", agents: [{ id: "web", kind: "inline", system: "x", extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }] }], steps: [{ id: "one", agent: "web", task: "review" }] }), "utf8");
+		await writeFile(join(root, "extension-tools.json"), JSON.stringify({ action: "run", objective: "extension", callerSkills: { include: ["pi-multiagent"] }, agents: [{ id: "web", kind: "inline", system: "x", callerSkills: "none", extensionTools: [{ name: "exa_search", from: { source: "npm:pi-exa-tools", scope: "user", origin: "package" } }] }], steps: [{ id: "one", agent: "web", task: "review" }] }), "utf8");
 		await writeFile(join(root, "too-large.json"), "x".repeat(MAX_GRAPH_FILE_BYTES + 1), "utf8");
 
 		const invalid = materializeAgentTeamInput({ action: "run", graphFile: "invalid.json" }, root);
@@ -77,6 +78,8 @@ test("materializeAgentTeamInput schema-validates graphFile contents", async () =
 
 		const extensionTools = materializeAgentTeamInput({ action: "run", graphFile: "extension-tools.json" }, root);
 		assert.equal(extensionTools.diagnostics.length, 0);
+		assert.deepEqual(extensionTools.input.callerSkills, { include: ["pi-multiagent"] });
+		assert.equal(extensionTools.input.agents?.[0]?.callerSkills, "none");
 		assert.equal(extensionTools.input.agents?.[0]?.extensionTools?.[0]?.name, "exa_search");
 
 		const tooLarge = materializeAgentTeamInput({ action: "run", graphFile: "too-large.json" }, root);

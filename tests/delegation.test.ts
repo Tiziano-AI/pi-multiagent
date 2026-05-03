@@ -10,7 +10,7 @@ import { runAgentTeam } from "../extensions/multiagent/src/delegation.ts";
 import { formatFailureProvenance } from "../extensions/multiagent/src/failure-provenance.ts";
 import { writeTempMarkdown } from "../extensions/multiagent/src/output-files.ts";
 import type { SpawnOptions } from "../extensions/multiagent/src/child-launch.ts";
-import type { AgentDiscoveryResult, AgentRunResult, LibraryOptions, ParentToolInventory } from "../extensions/multiagent/src/types.ts";
+import type { AgentDiscoveryResult, AgentRunResult, LibraryOptions, ParentSkillInventory, ParentToolInventory } from "../extensions/multiagent/src/types.ts";
 
 class FakeChild extends EventEmitter {
 	stdin = new PassThrough();
@@ -54,6 +54,15 @@ function parentToolsFor(extensionPath: string, names = ["exa_search"]): ParentTo
 			active: true,
 			sourceInfo: { path: extensionPath, source: "npm:pi-exa-tools", scope: "user", origin: "package", baseDir: undefined },
 		})),
+	};
+}
+
+function parentSkillsFor(skillPath: string, name = "pi-multiagent"): ParentSkillInventory {
+	return {
+		apiAvailable: true,
+		readActive: true,
+		errorMessage: undefined,
+		skills: [{ name, description: `${name} skill`, sourceInfo: { path: skillPath, source: "local", scope: "user", origin: "top-level", baseDir: dirname(skillPath) } }],
 	};
 }
 
@@ -316,6 +325,53 @@ test("runAgentTeam launches extension tool grants with explicit extension source
 	await rm(root, { recursive: true, force: true });
 });
 
+test("runAgentTeam inherits caller skills through explicit child --skill args", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-skill-launch-${Date.now()}`), { recursive: true });
+	const cwd = join(root, "workspace");
+	const skillDir = join(root, "skills", "pi-multiagent");
+	await mkdir(cwd, { recursive: true });
+	await mkdir(skillDir, { recursive: true });
+	const skillPath = join(skillDir, "SKILL.md");
+	await writeFile(skillPath, "---\nname: pi-multiagent\ndescription: multiagent skill\n---\n# pi-multiagent\n", "utf8");
+	const calls: string[][] = [];
+	const prompts: string[] = [];
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "skills",
+			agents: [{ id: "reader", kind: "inline", system: "Use skills when relevant.", tools: ["read"] }],
+			steps: [{ id: "skill-step", agent: "reader", task: "Use inherited skills." }],
+		},
+		{
+			cwd,
+			discovery: discovery(cwd),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			parentSkills: parentSkillsFor(skillPath),
+			signal: undefined,
+			onUpdate: undefined,
+			spawnProcess: (_command, args) => {
+				calls.push(args);
+				const promptIndex = args.indexOf("--append-system-prompt");
+				if (promptIndex >= 0) prompts.push(readFileSync(args[promptIndex + 1], "utf8"));
+				const child = new FakeChild();
+				queueMicrotask(() => {
+					child.stdout.write(assistantMessage("ok"));
+					child.close(0);
+				});
+				return child;
+			},
+		},
+	);
+	assert.equal(result.details.steps[0].status, "succeeded");
+	assert.equal(calls[0].includes("--no-skills"), true);
+	assert.equal(calls[0].filter((arg) => arg === "--skill").length, 1);
+	assert.equal(calls[0][calls[0].indexOf("--skill") + 1], realpathSync(skillPath));
+	assert.equal(prompts[0].includes("Caller Pi skills inherited: pi-multiagent"), true);
+	assert.deepEqual(result.details.agents[0].callerSkills.map((skill) => skill.name), ["pi-multiagent"]);
+	await rm(root, { recursive: true, force: true });
+});
+
 test("runAgentTeam refuses extension source changes before spawn", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-extension-stale-${Date.now()}`), { recursive: true });
 	const cwd = join(root, "workspace");
@@ -357,6 +413,49 @@ test("runAgentTeam refuses extension source changes before spawn", async () => {
 	assert.equal(result.details.steps[0].status, "failed");
 	assert.equal(result.details.steps[0].errorMessage?.startsWith("Extension tool source changed before launch"), true);
 	assert.equal(result.details.steps[0].failureProvenance?.likelyRoot, "extension tool source identity changed before child launch");
+	await rm(root, { recursive: true, force: true });
+});
+
+test("runAgentTeam refuses caller skill source changes before spawn", async () => {
+	const root = await mkdir(join(tmpdir(), `pi-multiagent-skill-stale-${Date.now()}`), { recursive: true });
+	const cwd = join(root, "workspace");
+	const skillDir = join(root, "skills", "pi-multiagent");
+	await mkdir(cwd, { recursive: true });
+	await mkdir(skillDir, { recursive: true });
+	const skillPath = join(skillDir, "SKILL.md");
+	await writeFile(skillPath, "---\nname: pi-multiagent\ndescription: skill\n---\n# one\n", "utf8");
+	let spawned = false;
+	let mutated = false;
+	const result = await runAgentTeam(
+		{
+			action: "run",
+			objective: "skills",
+			agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }],
+			steps: [{ id: "skill", agent: "reader", task: "x" }],
+		},
+		{
+			cwd,
+			discovery: discovery(cwd),
+			library,
+			defaults: { model: undefined, thinking: undefined },
+			parentSkills: parentSkillsFor(skillPath),
+			signal: undefined,
+			onUpdate: () => {
+				if (!mutated) {
+					mutated = true;
+					writeFileSync(skillPath, "---\nname: pi-multiagent\ndescription: changed\n---\n# two\n", "utf8");
+				}
+			},
+			spawnProcess: () => {
+				spawned = true;
+				return new FakeChild();
+			},
+		},
+	);
+	assert.equal(spawned, false);
+	assert.equal(result.details.steps[0].status, "failed");
+	assert.equal(result.details.steps[0].errorMessage?.startsWith("Caller skill source changed before launch"), true);
+	assert.equal(result.details.steps[0].failureProvenance?.likelyRoot, "caller skill source identity changed before child launch");
 	await rm(root, { recursive: true, force: true });
 });
 
@@ -3394,6 +3493,10 @@ test("runAgentTeam inlines exactly 100k upstream output", async () => {
 
 test("runAgentTeam automatically passes oversized upstream output as a file ref and adds read", async () => {
 	const root = await mkdir(join(tmpdir(), `pi-multiagent-auto-file-ref-${Date.now()}`), { recursive: true });
+	const skillDir = join(root, "skills", "pi-multiagent");
+	await mkdir(skillDir, { recursive: true });
+	const skillPath = join(skillDir, "SKILL.md");
+	await writeFile(skillPath, "---\nname: pi-multiagent\ndescription: multiagent skill\n---\n# pi-multiagent\n", "utf8");
 	const evidenceOutput = `OPENAI_API_KEY=sk-auto-file-ref-evidence-abcdefghijklmnopqrstuvwxyz ${"x".repeat(100001)}`;
 	const tasks: string[] = [];
 	const calls: string[][] = [];
@@ -3414,6 +3517,7 @@ test("runAgentTeam automatically passes oversized upstream output as a file ref 
 			discovery: discovery(root),
 			library,
 			defaults: { model: undefined, thinking: undefined },
+			parentSkills: parentSkillsFor(skillPath),
 			signal: undefined,
 			onUpdate: undefined,
 			spawnProcess: (_command, args) => {
@@ -3443,6 +3547,7 @@ test("runAgentTeam automatically passes oversized upstream output as a file ref 
 	assert.equal(calls[0].includes("--no-tools"), true);
 	assert.equal(consumerArgs.includes("--tools"), true);
 	assert.equal(consumerArgs[consumerArgs.indexOf("--tools") + 1], "read");
+	assert.equal(consumerArgs.includes("--skill"), false);
 	assert.equal(calls[2].includes("--no-tools"), true);
 	assert.equal(tasks[2].includes("consumer saw metadata"), true);
 	assert.equal(tasks[2].includes("File reference:"), false);

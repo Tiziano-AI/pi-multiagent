@@ -24,6 +24,7 @@ export function buildPiArgs(agent: ResolvedAgent, defaults: AgentInvocationDefau
 		...extensionArgs(agent),
 		"--no-context-files",
 		"--no-skills",
+		...skillArgs(agent),
 		"--no-prompt-templates",
 		"--no-themes",
 		"--system-prompt",
@@ -48,6 +49,17 @@ function extensionArgs(agent: ResolvedAgent): string[] {
 		if (seen.has(grant.source.realpath)) continue;
 		seen.add(grant.source.realpath);
 		args.push("--extension", grant.source.realpath);
+	}
+	return args;
+}
+
+function skillArgs(agent: ResolvedAgent): string[] {
+	const args: string[] = [];
+	const seen = new Set<string>();
+	for (const skill of agent.callerSkills) {
+		if (seen.has(skill.source.realpath)) continue;
+		seen.add(skill.source.realpath);
+		args.push("--skill", skill.source.realpath);
 	}
 	return args;
 }

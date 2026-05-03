@@ -5,12 +5,17 @@ import type {
 	AgentConfig,
 	AgentDiagnostic,
 	AgentRunResult,
+	CallerSkillSelectionSpec,
 	InvocationAgentSpec,
 	LibrarySource,
+	ParentSkillInventory,
 	ResolvedAgent,
 	TeamStepSpec,
 } from "./types.ts";
 import { LIBRARY_SOURCE_VALUES, PUBLIC_ID_PATTERN, SOURCE_QUALIFIED_LIBRARY_REF_PATTERN } from "./types.ts";
+import { createCallerSkillResolutionContext, resolveAgentCallerSkills, type CallerSkillResolutionContext } from "./caller-skills.ts";
+import { validateSteps } from "./planning-graph.ts";
+export { validateActionShape, validatePreflightShape } from "./planning-shape.ts";
 import { appendDiagnostic, createRunResult, noteFailureCause, setFailureProvenance } from "./json-events.ts";
 import { resolveAgentToolAccess, type ToolResolutionContext } from "./tool-policy.ts";
 
@@ -26,56 +31,25 @@ export interface RunPlan {
 	diagnostics: AgentDiagnostic[];
 }
 
+export interface RunPlanContext extends ToolResolutionContext {
+	parentSkills?: ParentSkillInventory;
+}
+
 interface LibraryRef {
 	source: LibrarySource;
 	name: string;
-}
-
-export function validateActionShape(input: AgentTeamInput): AgentDiagnostic[] {
-	if (input.action !== "catalog") return [];
-	const forbidden: string[] = [];
-	if (input.graphFile !== undefined) forbidden.push("graphFile");
-	if (input.objective !== undefined) forbidden.push("objective");
-	if (input.agents !== undefined) forbidden.push("agents");
-	if (input.steps !== undefined) forbidden.push("steps");
-	if (input.synthesis !== undefined) forbidden.push("synthesis");
-	if (input.limits !== undefined) forbidden.push("limits");
-	if (input.extensionToolPolicy !== undefined) forbidden.push("extensionToolPolicy");
-	if (forbidden.length === 0) return [];
-	return [makeDiagnostic("catalog-run-fields-denied", `Catalog action rejects run-only fields: ${forbidden.join(", ")}.`, "error", "/")];
-}
-
-export function validatePreflightShape(input: AgentTeamInput): AgentDiagnostic[] {
-	if (input.action !== "catalog" && input.action !== "run") return [makeDiagnostic("action-required", 'agent_team requires action:"run" or action:"catalog".', "error", "/action")];
-	const diagnostics = validateActionShape(input);
-	if (input.action !== "run") return diagnostics;
-	if (input.graphFile !== undefined) {
-		const forbidden: string[] = [];
-		if (input.objective !== undefined) forbidden.push("objective");
-		if (input.library !== undefined) forbidden.push("library");
-		if (input.agents !== undefined) forbidden.push("agents");
-		if (input.steps !== undefined) forbidden.push("steps");
-		if (input.synthesis !== undefined) forbidden.push("synthesis");
-		if (input.limits !== undefined) forbidden.push("limits");
-		if (input.extensionToolPolicy !== undefined) forbidden.push("extensionToolPolicy");
-		if (forbidden.length > 0) diagnostics.push(makeDiagnostic("graph-file-inline-fields-denied", `graphFile loads the complete run graph; remove inline fields: ${forbidden.join(", ")}.`, "error", "/"));
-		return diagnostics;
-	}
-	if (!input.objective?.trim()) diagnostics.push(makeDiagnostic("objective-required", "Run action requires objective.", "error", "/objective"));
-	if (!input.steps || input.steps.length === 0) diagnostics.push(makeDiagnostic("steps-required", "Run action requires at least one step.", "error", "/steps"));
-	if (input.library?.query !== undefined) diagnostics.push(makeDiagnostic("run-library-query-denied", "Run action rejects catalog-only library.query; use catalog to search or omit query for execution.", "error", "/library/query"));
-	return diagnostics;
 }
 
 export function resolveRunPlan(
 	input: AgentTeamInput,
 	libraryAgents: AgentConfig[],
 	baseDiagnostics: AgentDiagnostic[],
-	options?: ToolResolutionContext,
+	options?: RunPlanContext,
 ): RunPlan {
 	const diagnostics = [...baseDiagnostics];
 	const objective = normalizeRequiredText(input.objective, "objective", diagnostics, "/objective");
-	const agents = resolveAgents(input, libraryAgents, diagnostics, options);
+	const skillContext = createCallerSkillResolutionContext(options?.parentSkills);
+	const agents = resolveAgents(input, libraryAgents, diagnostics, options, skillContext);
 	const steps = resolveSteps(input, agents, diagnostics);
 	return { objective, agents, steps, diagnostics };
 }
@@ -121,8 +95,9 @@ export function blockStep(step: TeamStepSpec, agents: ResolvedAgent[], message: 
 	return blocked;
 }
 
-function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], toolContext: ToolResolutionContext | undefined): ResolvedAgent[] {
+function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], toolContext: ToolResolutionContext | undefined, skillContext: CallerSkillResolutionContext): ResolvedAgent[] {
 	const byId = new Map<string, ResolvedAgent>();
+	const defaultCallerSkills = input.callerSkills;
 	for (const [index, spec] of readAgentSpecs(input.agents).entries()) {
 		const agentPath = `/agents/${index}`;
 		if (!validatePublicId(spec.id, `agent id ${spec.id || "<empty>"}`, diagnostics, `${agentPath}/id`)) continue;
@@ -134,11 +109,19 @@ function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diag
 			diagnostics.push(makeDiagnostic("agent-id-duplicate", `Duplicate invocation agent id: ${spec.id}.`, "error", `${agentPath}/id`));
 			continue;
 		}
-		const resolved = spec.kind === "inline" ? resolveInlineAgent(spec, diagnostics, agentPath, toolContext) : resolveLibraryBinding(spec, libraryAgents, diagnostics, agentPath, toolContext);
+		const callerSkills = spec.callerSkills ?? defaultCallerSkills;
+		const callerSkillsExplicit = spec.callerSkills !== undefined;
+		const resolved = spec.kind === "inline" ? resolveInlineAgent(spec, diagnostics, agentPath, toolContext, skillContext, callerSkills, callerSkillsExplicit) : resolveLibraryBinding(spec, libraryAgents, diagnostics, agentPath, toolContext, skillContext, callerSkills, callerSkillsExplicit);
 		if (resolved) byId.set(resolved.id, resolved);
 	}
-	for (const agent of libraryAgents) {
-		if (!byId.has(agent.ref)) byId.set(agent.ref, fromLibraryAgent(agent, agent.ref));
+	for (const ref of referencedLibraryRefs(input)) {
+		if (byId.has(ref)) continue;
+		const parsed = parseLibraryRef(ref);
+		if (!parsed) continue;
+		const agent = libraryAgents.find((candidate) => candidate.name === parsed.name && candidate.source === parsed.source);
+		if (!agent) continue;
+		const resolved = applyCallerSkills(fromLibraryAgent(agent, ref), defaultCallerSkills, false, diagnostics, "/callerSkills", skillContext, `library agent ${ref}`);
+		if (resolved) byId.set(ref, resolved);
 	}
 	if (input.synthesis && input.synthesis.agent === undefined) {
 		byId.set(DEFAULT_SYNTHESIS_AGENT_ID, createDefaultSynthesizer());
@@ -146,7 +129,7 @@ function resolveAgents(input: AgentTeamInput, libraryAgents: AgentConfig[], diag
 	return Array.from(byId.values());
 }
 
-function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnostic[], path: string, toolContext: ToolResolutionContext | undefined): ResolvedAgent | undefined {
+function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnostic[], path: string, toolContext: ToolResolutionContext | undefined, skillContext: CallerSkillResolutionContext, callerSkillsSelection: CallerSkillSelectionSpec | undefined, callerSkillsExplicit: boolean): ResolvedAgent | undefined {
 	const system = spec.system?.trim();
 	if (spec.ref !== undefined) {
 		diagnostics.push(makeDiagnostic("inline-agent-ref-denied", `Inline agent ${spec.id} cannot set ref; use kind:"library" for reusable agents.`, "error", `${path}/ref`));
@@ -158,6 +141,8 @@ function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnos
 		diagnostics.push(makeDiagnostic("inline-agent-system-required", `Inline agent ${spec.id} requires system.`, "error", `${path}/system`));
 		return undefined;
 	}
+	const callerSkills = resolveAgentCallerSkills({ selection: callerSkillsSelection, explicit: callerSkillsExplicit, tools: toolAccess.tools, label: `inline agent ${spec.id}`, path: `${path}/callerSkills`, diagnostics, context: skillContext });
+	if (!callerSkills) return undefined;
 	return {
 		id: spec.id,
 		ref: `inline:${spec.id}`,
@@ -166,6 +151,7 @@ function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnos
 		description: spec.description ?? spec.id,
 		tools: toolAccess.tools,
 		extensionTools: toolAccess.extensionTools,
+		callerSkills,
 		model: spec.model,
 		thinking: spec.thinking,
 		systemPrompt: system,
@@ -177,7 +163,7 @@ function resolveInlineAgent(spec: InvocationAgentSpec, diagnostics: AgentDiagnos
 	};
 }
 
-function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], path: string, toolContext: ToolResolutionContext | undefined): ResolvedAgent | undefined {
+function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentConfig[], diagnostics: AgentDiagnostic[], path: string, toolContext: ToolResolutionContext | undefined, skillContext: CallerSkillResolutionContext, callerSkillsSelection: CallerSkillSelectionSpec | undefined, callerSkillsExplicit: boolean): ResolvedAgent | undefined {
 	if (spec.system !== undefined) {
 		diagnostics.push(makeDiagnostic("library-agent-system-denied", `Library agent binding ${spec.id} cannot override system; use an inline agent for custom prompts.`, "error", `${path}/system`));
 		return undefined;
@@ -199,7 +185,7 @@ function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentCo
 	const resolved = fromLibraryAgent(agent, spec.id);
 	const toolAccess = resolveAgentToolAccess({ tools: spec.tools ?? resolved.tools, extensionTools: spec.extensionTools, label: `library agent binding ${spec.id}`, toolsPath: `${path}/tools`, extensionToolsPath: `${path}/extensionTools`, diagnostics, context: toolContext });
 	if (!toolAccess) return undefined;
-	return {
+	const withOverrides = {
 		...resolved,
 		description: spec.description ?? resolved.description,
 		tools: toolAccess.tools,
@@ -209,6 +195,13 @@ function resolveLibraryBinding(spec: InvocationAgentSpec, libraryAgents: AgentCo
 		cwd: spec.cwd ?? resolved.cwd,
 		outputContract: spec.outputContract ?? resolved.outputContract,
 	};
+	return applyCallerSkills(withOverrides, callerSkillsSelection, callerSkillsExplicit, diagnostics, `${path}/callerSkills`, skillContext, `library agent binding ${spec.id}`);
+}
+
+function applyCallerSkills(agent: ResolvedAgent, selection: CallerSkillSelectionSpec | undefined, explicit: boolean, diagnostics: AgentDiagnostic[], path: string, skillContext: CallerSkillResolutionContext, label: string): ResolvedAgent | undefined {
+	const callerSkills = resolveAgentCallerSkills({ selection, explicit, tools: agent.tools, label, path, diagnostics, context: skillContext });
+	if (!callerSkills) return undefined;
+	return { ...agent, callerSkills };
 }
 
 function fromLibraryAgent(agent: AgentConfig, id: string): ResolvedAgent {
@@ -220,6 +213,7 @@ function fromLibraryAgent(agent: AgentConfig, id: string): ResolvedAgent {
 		description: agent.description,
 		tools: agent.tools ?? [],
 		extensionTools: [],
+		callerSkills: [],
 		model: agent.model,
 		thinking: agent.thinking,
 		systemPrompt: agent.systemPrompt,
@@ -240,6 +234,7 @@ function createDefaultSynthesizer(): ResolvedAgent {
 		description: "No-tool synthesis agent created automatically for this call.",
 		tools: [],
 		extensionTools: [],
+		callerSkills: [],
 		model: undefined,
 		thinking: "inherit",
 		systemPrompt: [
@@ -304,54 +299,6 @@ function readSteps(input: AgentTeamInput["steps"], diagnostics: AgentDiagnostic[
 	});
 }
 
-function validateSteps(steps: TeamStepSpec[], agents: ResolvedAgent[], diagnostics: AgentDiagnostic[]): void {
-	const agentById = new Map(agents.map((agent) => [agent.id, agent]));
-	const synthesisIds = new Set(steps.filter((step) => step.synthesis).map((step) => step.id));
-	const stepIds = new Set<string>();
-	for (let index = 0; index < steps.length; index += 1) {
-		const step = steps[index];
-		const stepPath = step.synthesis ? "/synthesis" : `/steps/${index}`;
-		if (stepIds.has(step.id)) diagnostics.push(makeDiagnostic("step-id-duplicate", `Duplicate step id: ${step.id}.`, "error", `${stepPath}/id`));
-		stepIds.add(step.id);
-		const agent = agentById.get(step.agent);
-		if (!agent) diagnostics.push(makeDiagnostic("step-agent-unknown", `Step ${step.id} references unknown agent ${step.agent}. Define it in agents[], use a source-qualified library ref, run action:"catalog", or adjust library.sources/projectAgents.`, "error", `${stepPath}/agent`));
-		for (const need of step.needs) {
-			if (need === step.id) diagnostics.push(makeDiagnostic("step-self-dependency", `Step ${step.id} depends on itself.`, "error", `${stepPath}/needs`));
-			if (!step.synthesis && synthesisIds.has(need)) diagnostics.push(makeDiagnostic("synthesis-must-be-terminal", `Step ${step.id} depends on synthesis step ${need}; synthesis is terminal fan-in and cannot be used as an intermediate dependency.`, "error", `${stepPath}/needs`));
-			if (!steps.some((candidate) => candidate.id === need)) diagnostics.push(makeDiagnostic("step-dependency-unknown", `Step ${step.id} depends on unknown step ${need}.`, "error", `${stepPath}/needs`));
-		}
-	}
-	for (const cycle of findCycles(steps)) diagnostics.push(makeDiagnostic("step-cycle", `Dependency cycle: ${cycle.join(" -> ")}.`, "error", "/steps"));
-}
-
-function findCycles(steps: TeamStepSpec[]): string[][] {
-	const byId = new Map(steps.map((step) => [step.id, step]));
-	const visiting = new Set<string>();
-	const visited = new Set<string>();
-	const cycles: string[][] = [];
-	const cycleKeys = new Set<string>();
-	const visit = (id: string, path: string[]) => {
-		if (visiting.has(id)) {
-			const cycle = path.slice(path.indexOf(id));
-			if (cycle[cycle.length - 1] !== id) cycle.push(id);
-			const key = cycle.join("\u0000");
-			if (!cycleKeys.has(key)) {
-				cycleKeys.add(key);
-				cycles.push(cycle);
-			}
-			return;
-		}
-		if (visited.has(id)) return;
-		visiting.add(id);
-		const step = byId.get(id);
-		for (const need of step?.needs ?? []) visit(need, [...path, need]);
-		visiting.delete(id);
-		visited.add(id);
-	};
-	for (const step of steps) visit(step.id, [step.id]);
-	return cycles;
-}
-
 function normalizeRequiredText(value: string | undefined, field: string, diagnostics: AgentDiagnostic[], path: string): string {
 	const trimmed = value?.trim();
 	if (!trimmed) {
@@ -370,6 +317,7 @@ function readAgentSpecs(input: AgentTeamInput["agents"]): InvocationAgentSpec[] 
 		system: spec.system,
 		tools: spec.tools,
 		extensionTools: spec.extensionTools,
+		callerSkills: spec.callerSkills,
 		model: spec.model,
 		thinking: spec.thinking,
 		cwd: spec.cwd,
@@ -403,6 +351,10 @@ function parseLibraryRef(value: string): LibraryRef | undefined {
 	const [source, name] = value.split(":");
 	if (!LIBRARY_SOURCE_VALUES.includes(source as LibrarySource) || !PUBLIC_ID_REGEX.test(name)) return undefined;
 	return { source: source as LibrarySource, name };
+}
+
+function referencedLibraryRefs(input: AgentTeamInput): string[] {
+	return dedupeRefs([...(input.steps ?? []).map((step) => step.agent), input.synthesis?.agent ?? ""].filter((ref) => SOURCE_QUALIFIED_LIBRARY_REF_REGEX.test(ref)));
 }
 
 function dedupeRefs(values: string[]): string[] {

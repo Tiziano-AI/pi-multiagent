@@ -86,3 +86,19 @@ test("AgentTeamSchema separates built-in tools from extension tool grants", () =
 	assert.equal(validate.Check(extensionGrant), true);
 	assert.equal(validate.Check(extraProperty), false);
 });
+
+test("AgentTeamSchema supports caller skill inheritance selection", () => {
+	const validate = Compile(AgentTeamSchema);
+	const inherit = { action: "run", objective: "ok", callerSkills: "inherit", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	const none = { action: "run", objective: "ok", agents: [{ id: "reader", kind: "inline", system: "x", callerSkills: "none" }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	const include = { action: "run", objective: "ok", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"], callerSkills: { include: ["pi-multiagent"] } }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	const exclude = { action: "run", objective: "ok", callerSkills: { exclude: ["pi-multiagent"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	const pathGrant = { action: "run", objective: "bad", agents: [{ id: "reader", kind: "inline", system: "x", callerSkills: { path: "/tmp/SKILL.md" } }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	const both = { action: "run", objective: "bad", callerSkills: { include: ["pi-multiagent"], exclude: ["other-skill"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "s", agent: "reader", task: "x" }] };
+	assert.equal(validate.Check(inherit), true);
+	assert.equal(validate.Check(none), true);
+	assert.equal(validate.Check(include), true);
+	assert.equal(validate.Check(exclude), true);
+	assert.equal(validate.Check(pathGrant), false);
+	assert.equal(validate.Check(both), false);
+});

@@ -8,6 +8,8 @@ export type LibrarySource = "package" | "user" | "project";
 
 export type ProjectAgentsPolicy = "deny" | "confirm" | "allow";
 
+export type CallerSkillSelectionMode = "inherit" | "none";
+
 export type InvocationAgentKind = "inline" | "library";
 
 export type ThinkingLevel = "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -28,6 +30,8 @@ export const TOOL_NAME_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$";
 export const BUILTIN_CHILD_TOOL_NAMES = ["read", "grep", "find", "ls", "bash", "edit", "write"] as const;
 export const EXTENSION_SOURCE_SCOPE_VALUES = ["user", "project", "temporary"] as const;
 export const EXTENSION_SOURCE_ORIGIN_VALUES = ["package", "top-level"] as const;
+export const CALLER_SKILL_SELECTION_MODE_VALUES = ["inherit", "none"] as const;
+export const SKILL_NAME_PATTERN = "^(?!.*--)[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$";
 
 export type BuiltinChildToolName = (typeof BUILTIN_CHILD_TOOL_NAMES)[number];
 export type ExtensionSourceScope = (typeof EXTENSION_SOURCE_SCOPE_VALUES)[number];
@@ -49,6 +53,7 @@ export const MAX_TEXT_FIELD_CHARS = 50000;
 export const MAX_SHORT_TEXT_FIELD_CHARS = 1000;
 export const MAX_PATH_FIELD_CHARS = 4096;
 export const MAX_MODEL_FIELD_CHARS = 256;
+export const MAX_CALLER_SKILLS = 128;
 export const MAX_GRAPH_FILE_BYTES = 256 * 1024;
 export const EVENT_PREVIEW_COUNT = 40;
 export const EVENT_PREVIEW_CHARS = 2000;
@@ -105,6 +110,46 @@ export interface ExtensionToolPolicy {
 	localExtensions: ExtensionToolTrustPolicy;
 }
 
+export type CallerSkillFilterSpec = { include: string[]; exclude?: never } | { exclude: string[]; include?: never };
+
+export type CallerSkillSelectionSpec = CallerSkillSelectionMode | CallerSkillFilterSpec;
+
+export interface ParentSkillSourceInfo {
+	path: string;
+	source: string;
+	scope: ExtensionSourceScope;
+	origin: ExtensionSourceOrigin;
+	baseDir: string | undefined;
+}
+
+export interface ParentSkillInfo {
+	name: string;
+	description: string | undefined;
+	sourceInfo: ParentSkillSourceInfo;
+}
+
+export interface ParentSkillInventory {
+	apiAvailable: boolean;
+	readActive: boolean;
+	errorMessage: string | undefined;
+	skills: ParentSkillInfo[];
+}
+
+export interface ResolvedCallerSkillSource extends ParentSkillSourceInfo {
+	realpath: string;
+	dev: number;
+	ino: number;
+	size: number;
+	mtimeMs: number;
+	sha256: string;
+}
+
+export interface ResolvedCallerSkill {
+	name: string;
+	description: string | undefined;
+	source: ResolvedCallerSkillSource;
+}
+
 export interface ParentToolSourceInfo {
 	path: string;
 	source: string;
@@ -154,6 +199,7 @@ export interface InvocationAgentSpec {
 	system: string | undefined;
 	tools: string[] | undefined;
 	extensionTools: ExtensionToolGrantSpec[] | undefined;
+	callerSkills: CallerSkillSelectionSpec | undefined;
 	model: string | undefined;
 	thinking: ThinkingLevel | undefined;
 	cwd: string | undefined;
@@ -168,6 +214,7 @@ export interface ResolvedAgent {
 	description: string;
 	tools: string[];
 	extensionTools: ResolvedExtensionToolGrant[];
+	callerSkills: ResolvedCallerSkill[];
 	model: string | undefined;
 	thinking: ThinkingLevel | undefined;
 	systemPrompt: string;
@@ -301,6 +348,12 @@ export interface PublicExtensionToolGrant {
 	from: ResolvedExtensionSource;
 }
 
+export interface PublicCallerSkillGrant {
+	name: string;
+	description: string | undefined;
+	from: ResolvedCallerSkillSource;
+}
+
 export interface PublicResolvedAgent {
 	id: string;
 	ref: string;
@@ -309,6 +362,7 @@ export interface PublicResolvedAgent {
 	description: string;
 	tools: string[];
 	extensionTools: PublicExtensionToolGrant[];
+	callerSkills: PublicCallerSkillGrant[];
 	model: string | undefined;
 	thinking: ThinkingLevel | undefined;
 	source: AgentSource;

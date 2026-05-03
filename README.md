@@ -73,6 +73,7 @@ The assistant can:
 - pass one helper's output to another as evidence, not instructions;
 - ask for a final synthesis across multiple lanes;
 - move a reusable graph into a checked-in JSON file;
+- inherit the caller model's currently visible Pi skills for read-enabled helpers, with optional include/exclude curation;
 - explicitly grant parent-active extension tools, such as web search tools, to selected helpers;
 - propose reusable user or project catalog agents when an inline role keeps proving useful.
 
@@ -202,6 +203,28 @@ Run `catalog` before using reusable agents. Catalog output is authoritative for 
 
 Project agents are repository-controlled prompts. Keep them denied unless you trust the repository. `projectAgents: "confirm"` fails closed without UI; use `"allow"` only when trust is explicit.
 
+## Caller skills
+
+By default, read-enabled helpers inherit the same Pi skills that are visible to the calling model. The skill set comes from the caller's current Pi session, not from a separate `agent_team` catalog. Child launch still keeps `--no-skills` to deny ambient discovery, then adds explicit `--skill` paths for the selected caller skills.
+
+Use `callerSkills` to disable or curate inheritance:
+
+```json
+{ "callerSkills": "none" }
+```
+
+```json
+{ "callerSkills": { "include": ["pi-multiagent"] } }
+```
+
+```json
+{ "callerSkills": { "exclude": ["cloudflare-publish"] } }
+```
+
+An agent-level `callerSkills` value overrides the run-level value. Helpers without the built-in `read` tool keep their no-read isolation and do not receive skill files unless you explicitly grant `read`. Skill frontmatter such as `allowed-tools` does not grant child tools; use `tools` and `extensionTools` for tool access.
+
+`projectAgents` governs reusable `agent_team` library agents only; it does not filter Pi skills already visible to the caller. In untrusted repos or mixed skill contexts, set `callerSkills:"none"` or use a small `include` allowlist.
+
 ## Extension tools
 
 `tools` is for built-in child tools only: `read`, `grep`, `find`, `ls`, `bash`, `edit`, and `write`. Extension tools use `extensionTools`.
@@ -270,7 +293,7 @@ For graph selection and adaptation rules, ask the agent to load `/skill:pi-multi
 
 ## Boundaries
 
-Each helper is a separate child Pi process. It does not inherit the parent session, project context files, ambient extensions, skills, prompt templates, themes, or tools. If a helper needs repo-specific instructions, the parent must put them in that helper's task or output contract.
+Each helper is a separate child Pi process. It does not inherit the parent session, project context files, ambient extensions, prompt templates, themes, tools, or ambient skill discovery. Read-enabled helpers inherit caller-visible skills only through explicit `--skill` paths selected by `callerSkills`. If a helper needs repo-specific instructions beyond skills, the parent must put them in that helper's task or output contract.
 
 Child processes do inherit the parent OS process environment needed to run Pi and provider clients. `agent_team` does not scrub environment variables or credentials.
 
@@ -288,7 +311,7 @@ Upstream output is passed to dependent steps as evidence, not instructions. If a
 
 Failed, blocked, timed-out, or aborted steps include status, `failureCause`, and failure provenance. Child-authored explanations do not override parent-observed process facts.
 
-Handoff is automatic. Assistant output up to 100000 characters is copied inline to dependent steps. Larger output is written to a mode `0600` temp file, and the receiver gets `read` only when it needs to dereference that artifact.
+Handoff is automatic. Assistant output up to 100000 characters is copied inline to dependent steps. Larger output is written to a mode `0600` temp file, and the receiver gets `read` only when it needs to dereference that artifact. This artifact-only `read` grant is added after planning and does not trigger caller-skill inheritance; grant `read` explicitly when a helper should use inherited skills.
 
 The model-facing aggregate output is capped at 2000 lines or 50KB. When possible, the full aggregate is written to a temp file.
 
@@ -324,6 +347,7 @@ The model-facing aggregate output is capped at 2000 lines or 50KB. When possible
 | Downstream step is blocked | Inspect failed dependency status, `failureCause`, and failure provenance before retrying. |
 | Extension tool is rejected in `tools` | Put built-ins in `tools`; put parent-active extension tools such as `exa_search` in `extensionTools` with `from.source` provenance from catalog output. |
 | Extension grant is denied | Check the tool is active in the parent, source provenance matches, and `extensionToolPolicy` allows trusted project or local temporary extension code when needed. |
+| Caller skill is missing | The helper needs built-in `read`; `callerSkills` selects only skills visible to the calling model, and hidden `disable-model-invocation` skills are not inherited. |
 | Run appears stuck | The default per-step timeout is 7200 seconds; raise `limits.timeoutSecondsPerStep` for broad, untrusted, implementation, bash-using, release, or other tool-using graphs. |
 
 ## Package contents

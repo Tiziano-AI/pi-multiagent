@@ -38,6 +38,7 @@ function validateGraphFileWrapper(input: AgentTeamInput): AgentDiagnostic[] {
 	if (input.synthesis !== undefined) forbidden.push("synthesis");
 	if (input.limits !== undefined) forbidden.push("limits");
 	if (input.extensionToolPolicy !== undefined) forbidden.push("extensionToolPolicy");
+	if (input.callerSkills !== undefined) forbidden.push("callerSkills");
 	if (forbidden.length > 0) diagnostics.push(makeDiagnostic("graph-file-inline-fields-denied", `graphFile loads the complete run graph; remove inline fields: ${forbidden.join(", ")}.`, "/"));
 	return diagnostics;
 }

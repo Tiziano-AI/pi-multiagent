@@ -4,10 +4,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveRunPlan, validateActionShape, validatePreflightShape } from "../extensions/multiagent/src/planning.ts";
-import type { AgentConfig, AgentDiagnostic, ExtensionSourceScope, ParentToolInventory } from "../extensions/multiagent/src/types.ts";
+import type { AgentConfig, AgentDiagnostic, ExtensionSourceScope, ParentSkillInventory, ParentToolInventory } from "../extensions/multiagent/src/types.ts";
 
 const noDiagnostics: AgentDiagnostic[] = [];
 const extensionToolPolicy = { projectExtensions: "deny", localExtensions: "deny" } as const;
+const emptyParentTools: ParentToolInventory = { apiAvailable: true, errorMessage: undefined, tools: [] };
+
+async function makeSkillInventory(skills: { name: string; hidden?: boolean; content?: string }[] = [{ name: "pi-multiagent" }]) {
+	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-skills-"));
+	const skillsDir = join(root, "skills");
+	await mkdir(skillsDir, { recursive: true });
+	const entries = [];
+	for (const skill of skills) {
+		const dir = join(skillsDir, skill.name);
+		await mkdir(dir, { recursive: true });
+		const path = join(dir, "SKILL.md");
+		const hidden = skill.hidden ? "disable-model-invocation: true\n" : "";
+		const content = skill.content ?? `---\nname: ${skill.name}\ndescription: ${skill.name} skill\n${hidden}---\n# ${skill.name}\n`;
+		await writeFile(path, content, "utf8");
+		entries.push({ name: skill.name, description: `${skill.name} skill`, sourceInfo: { path, source: "local", scope: "user" as const, origin: "top-level" as const, baseDir: dir } });
+	}
+	const inventory: ParentSkillInventory = { apiAvailable: true, readActive: true, errorMessage: undefined, skills: entries };
+	return { root, inventory };
+}
 
 async function makeToolInventory(scope: ExtensionSourceScope = "user", options: { source?: string; active?: boolean; cwdInside?: boolean; extraReserved?: string[] } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-multiagent-tools-"));
@@ -133,6 +152,160 @@ test("resolveRunPlan defaults inline agents without tools to no tools", () => {
 		noDiagnostics,
 	);
 	assert.deepEqual(plan.agents.find((agent) => agent.id === "quiet")?.tools, []);
+});
+
+test("resolveRunPlan inherits caller-visible skills for read-enabled agents", async () => {
+	const fixture = await makeSkillInventory([{ name: "pi-multiagent" }, { name: "voices-local-studio" }]);
+	try {
+		const plan = resolveRunPlan(
+			{
+				action: "run",
+				objective: "skills",
+				agents: [{ id: "reader", kind: "inline", system: "Use skills when relevant.", tools: ["read"] }],
+				steps: [{ id: "one", agent: "reader", task: "x" }],
+			},
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		assert.equal(plan.diagnostics.some((item) => item.severity === "error"), false);
+		assert.deepEqual(plan.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), ["pi-multiagent", "voices-local-studio"]);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("resolveRunPlan curates caller skills with include, exclude, and none", async () => {
+	const fixture = await makeSkillInventory([{ name: "pi-multiagent" }, { name: "voices-local-studio" }]);
+	try {
+		const include = resolveRunPlan(
+			{ action: "run", objective: "include", callerSkills: { include: ["voices-local-studio"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const exclude = resolveRunPlan(
+			{ action: "run", objective: "exclude", callerSkills: { exclude: ["voices-local-studio"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const none = resolveRunPlan(
+			{ action: "run", objective: "none", callerSkills: "inherit", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"], callerSkills: "none" }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		assert.deepEqual(include.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), ["voices-local-studio"]);
+		assert.deepEqual(exclude.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), ["pi-multiagent"]);
+		assert.deepEqual(none.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), []);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("resolveRunPlan applies caller skill curation before the inheritance cap", async () => {
+	const skillNames = ["target-skill", ...Array.from({ length: 130 }, (_, index) => `skill-${index}`)];
+	const fixture = await makeSkillInventory(skillNames.map((name) => ({ name })));
+	try {
+		const include = resolveRunPlan(
+			{ action: "run", objective: "include many", callerSkills: { include: ["target-skill"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const exclude = resolveRunPlan(
+			{ action: "run", objective: "exclude many", callerSkills: { exclude: ["skill-0", "skill-1", "skill-2"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		assert.equal(include.diagnostics.some((item) => item.code === "caller-skills-too-many"), false);
+		assert.deepEqual(include.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), ["target-skill"]);
+		assert.equal(exclude.diagnostics.some((item) => item.code === "caller-skills-too-many"), false);
+		assert.equal(exclude.agents.find((agent) => agent.id === "reader")?.callerSkills.length, 128);
+		assert.equal(exclude.agents.find((agent) => agent.id === "reader")?.callerSkills.some((skill) => skill.name === "skill-0"), false);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("resolveRunPlan filters hidden caller skills with Pi frontmatter semantics", async () => {
+	const hiddenContent = "---\r\nname: hidden-skill\r\ndescription: hidden skill\r\ndisable-model-invocation: true # parent-only\r\n---\r\n# hidden\r\n";
+	const fixture = await makeSkillInventory([{ name: "visible-skill" }, { name: "hidden-skill", content: hiddenContent }]);
+	try {
+		const inherit = resolveRunPlan(
+			{ action: "run", objective: "hidden", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const includeHidden = resolveRunPlan(
+			{ action: "run", objective: "hidden include", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"], callerSkills: { include: ["hidden-skill"] } }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		assert.deepEqual(inherit.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), ["visible-skill"]);
+		assert.equal(includeHidden.diagnostics.some((item) => item.code === "caller-skills-unknown"), true);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("resolveRunPlan ignores caller skills for no-read defaults and unused library agents", async () => {
+	const fixture = await makeSkillInventory([{ name: "pi-multiagent" }]);
+	const quietLibrary: AgentConfig = { ...reviewer, name: "quiet", ref: "user:quiet", tools: [], source: "user", filePath: "/user/quiet.md" };
+	try {
+		const rootInherit = resolveRunPlan(
+			{ action: "run", objective: "no read inherit", callerSkills: "inherit", agents: [{ id: "quiet", kind: "inline", system: "x" }], steps: [{ id: "one", agent: "quiet", task: "x" }] },
+			[quietLibrary],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const rootInclude = resolveRunPlan(
+			{ action: "run", objective: "unused library", callerSkills: { include: ["pi-multiagent"] }, agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"] }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[quietLibrary],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		assert.equal(rootInherit.diagnostics.some((item) => item.code === "caller-skills-read-required"), false);
+		assert.deepEqual(rootInherit.agents.find((agent) => agent.id === "quiet")?.callerSkills, []);
+		assert.equal(rootInclude.diagnostics.some((item) => item.code === "caller-skills-read-required"), false);
+		assert.equal(rootInclude.agents.some((agent) => agent.id === "user:quiet"), false);
+		assert.deepEqual(rootInclude.agents.find((agent) => agent.id === "reader")?.callerSkills.map((skill) => skill.name), ["pi-multiagent"]);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
+});
+
+test("resolveRunPlan fails closed for explicit callerSkills without read or visible names", async () => {
+	const fixture = await makeSkillInventory([{ name: "pi-multiagent" }, { name: "hidden-skill", hidden: true }]);
+	try {
+		const noRead = resolveRunPlan(
+			{ action: "run", objective: "no read", agents: [{ id: "quiet", kind: "inline", system: "x", callerSkills: { include: ["pi-multiagent"] } }], steps: [{ id: "one", agent: "quiet", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const unknown = resolveRunPlan(
+			{ action: "run", objective: "unknown", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"], callerSkills: { include: ["missing-skill"] } }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		const hidden = resolveRunPlan(
+			{ action: "run", objective: "hidden", agents: [{ id: "reader", kind: "inline", system: "x", tools: ["read"], callerSkills: { include: ["hidden-skill"] } }], steps: [{ id: "one", agent: "reader", task: "x" }] },
+			[],
+			noDiagnostics,
+			{ parentTools: emptyParentTools, parentSkills: fixture.inventory, extensionToolPolicy, cwd: fixture.root },
+		);
+		assert.equal(noRead.diagnostics.some((item) => item.code === "caller-skills-read-required"), true);
+		assert.equal(unknown.diagnostics.some((item) => item.code === "caller-skills-unknown"), true);
+		assert.equal(hidden.diagnostics.some((item) => item.code === "caller-skills-unknown"), true);
+	} finally {
+		await rm(fixture.root, { recursive: true, force: true });
+	}
 });
 
 test("resolveRunPlan binds source-qualified library agents without adding built-in synthesizer", () => {

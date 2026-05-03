@@ -20,6 +20,7 @@ export function snapshotAgent(agent: ResolvedAgent): PublicResolvedAgent {
 		description: agent.description,
 		tools: [...agent.tools],
 		extensionTools: agent.extensionTools.map((tool) => ({ name: tool.name, description: tool.description, from: { ...tool.source } })),
+		callerSkills: agent.callerSkills.map((skill) => ({ name: skill.name, description: skill.description, from: { ...skill.source } })),
 		model: agent.model,
 		thinking: agent.thinking,
 		source: agent.source,

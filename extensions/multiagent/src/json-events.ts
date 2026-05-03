@@ -383,6 +383,7 @@ function inferLikelyFailureRoot(result: AgentRunResult, exitCode: number | undef
 	if (message.startsWith("Working directory is not a directory:")) return "invalid working directory prevented child launch";
 	if (message.startsWith("Bash-enabled subagent refused cwd with project settings:")) return "project settings could alter bash execution in the child cwd";
 	if (message.startsWith("Extension tool source changed before launch")) return "extension tool source identity changed before child launch";
+	if (message.startsWith("Caller skill source changed before launch")) return "caller skill source identity changed before child launch";
 	if (message.startsWith("Subagent launch error:")) return "parent failed before child process launch completed";
 	if (message.startsWith("Subagent process error:")) return "child process spawn or runtime process error";
 	if (message.startsWith("Subagent assistant output artifact persistence failed:")) return "parent failed to persist oversized assistant output artifact";

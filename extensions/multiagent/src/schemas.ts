@@ -6,11 +6,13 @@ import {
 	AGENT_REFERENCE_PATTERN,
 	AGENT_TEAM_ACTION_VALUES,
 	BUILTIN_CHILD_TOOL_NAMES,
+	CALLER_SKILL_SELECTION_MODE_VALUES,
 	DEFAULT_TIMEOUT_SECONDS_PER_STEP,
 	EXTENSION_SOURCE_ORIGIN_VALUES,
 	EXTENSION_SOURCE_SCOPE_VALUES,
 	INVOCATION_AGENT_KIND_VALUES,
 	LIBRARY_SOURCE_VALUES,
+	MAX_CALLER_SKILLS,
 	MAX_CONCURRENCY,
 	MAX_DEPENDENCIES_PER_STEP,
 	MAX_INVOCATION_AGENTS,
@@ -22,6 +24,7 @@ import {
 	MAX_TIMEOUT_SECONDS_PER_STEP,
 	PROJECT_AGENTS_POLICY_VALUES,
 	PUBLIC_ID_PATTERN,
+	SKILL_NAME_PATTERN,
 	SOURCE_QUALIFIED_LIBRARY_REF_PATTERN,
 	THINKING_LEVEL_VALUES,
 	TOOL_NAME_PATTERN,
@@ -90,6 +93,24 @@ const ExtensionToolGrantSchema = Type.Object(
 	StrictObjectOptions,
 );
 
+const CallerSkillNamesSchema = Type.Array(Type.String({ description: "Caller-visible Pi skill name.", minLength: 1, maxLength: 64, pattern: SKILL_NAME_PATTERN }), {
+	description: "Caller-visible Pi skill names from the current parent model context.",
+	minItems: 1,
+	maxItems: MAX_CALLER_SKILLS,
+});
+
+const CallerSkillsSchema = Type.Union(
+	[
+		StringEnum(CALLER_SKILL_SELECTION_MODE_VALUES, {
+			description: 'Caller Pi skill inheritance. Default "inherit" relays the caller model\'s currently visible Pi skills to read-enabled children; "none" disables skill inheritance.',
+			default: "inherit",
+		}),
+		Type.Object({ include: CallerSkillNamesSchema }, StrictObjectOptions),
+		Type.Object({ exclude: CallerSkillNamesSchema }, StrictObjectOptions),
+	],
+	{ description: 'Caller Pi skill inheritance selection: "inherit", "none", {"include":[...]}, or {"exclude":[...]}. Names are selected from the caller model\'s current visible Pi skills; this is not a separate agent_team skill catalog.' },
+);
+
 const AgentSpecSchema = Type.Object(
 	{
 		id: publicId('Invocation-local agent id used by steps. Lowercase letters, digits, and hyphens only. Reserved: "agent-team-synthesizer".'),
@@ -111,6 +132,7 @@ const AgentSpecSchema = Type.Object(
 				maxItems: 24,
 			}),
 		),
+		callerSkills: Type.Optional(CallerSkillsSchema),
 		model: Type.Optional(nonEmptyText("Optional Pi model pattern or provider/model id for this agent.", MAX_MODEL_FIELD_CHARS)),
 		thinking: Type.Optional(
 			StringEnum(THINKING_LEVEL_VALUES, {
@@ -206,9 +228,10 @@ export const AgentTeamSchema = Type.Object(
 			description: 'Use "catalog" to list reusable agents. Use "run" to execute a bounded graph of inline or source-qualified library agents.',
 		}),
 		objective: Type.Optional(nonEmptyText("Overall objective for the team. Required for run; rejected for catalog.")),
-		graphFile: Type.Optional(nonEmptyText("Run-only relative path to a JSON file containing a complete agent_team run graph. Mutually exclusive with objective, library, extensionToolPolicy, agents, steps, synthesis, and limits.", MAX_PATH_FIELD_CHARS)),
+		graphFile: Type.Optional(nonEmptyText("Run-only relative path to a JSON file containing a complete agent_team run graph. Mutually exclusive with objective, library, extensionToolPolicy, callerSkills, agents, steps, synthesis, and limits.", MAX_PATH_FIELD_CHARS)),
 		library: Type.Optional(LibrarySchema),
 		extensionToolPolicy: Type.Optional(ExtensionToolPolicySchema),
+		callerSkills: Type.Optional(CallerSkillsSchema),
 		agents: Type.Optional(
 			Type.Array(AgentSpecSchema, {
 				description: "Invocation-local inline agents and reusable library bindings. Optional; steps can directly use source-qualified library refs.",
