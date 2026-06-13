@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Compile } from "typebox/compile";
+import { normalizeLimits } from "../extensions/multiagent/src/limits.ts";
 import { AgentTeamSchema } from "../extensions/multiagent/src/schemas.ts";
-import { DEFAULT_MAX_RUN_SECONDS, DEFAULT_NOTIFY_MAX_NOTICES, DEFAULT_NOTIFY_MIN_INTERVAL_SECONDS, DEFAULT_RESULT_PREVIEW_MAX_BYTES, DEFAULT_TERMINAL_RETENTION_SECONDS, DEFAULT_TIMEOUT_SECONDS_PER_STEP, MAX_CLIENT_MESSAGE_ID_CHARS, MAX_MAX_RUN_SECONDS, MAX_PARENT_MESSAGE_CHARS, MAX_PATH_FIELD_CHARS, MAX_RESULT_PREVIEW_BYTES, MAX_RUN_STATUS_WAIT_SECONDS, MAX_STEPS, MAX_TERMINAL_RETENTION_SECONDS, MAX_TEXT_FIELD_CHARS, MAX_TIMEOUT_SECONDS_PER_STEP } from "../extensions/multiagent/src/types.ts";
+import { DEFAULT_CONCURRENCY, DEFAULT_MAX_RUN_SECONDS, DEFAULT_NOTIFY_MAX_NOTICES, DEFAULT_NOTIFY_MIN_INTERVAL_SECONDS, DEFAULT_RESULT_PREVIEW_MAX_BYTES, DEFAULT_TERMINAL_RETENTION_SECONDS, DEFAULT_TIMEOUT_SECONDS_PER_STEP, MAX_CLIENT_MESSAGE_ID_CHARS, MAX_CONCURRENCY, MAX_MAX_RUN_SECONDS, MAX_PARENT_MESSAGE_CHARS, MAX_PATH_FIELD_CHARS, MAX_RESULT_PREVIEW_BYTES, MAX_RUN_STATUS_WAIT_SECONDS, MAX_STEPS, MAX_TERMINAL_RETENTION_SECONDS, MAX_TEXT_FIELD_CHARS, MAX_TIMEOUT_SECONDS_PER_STEP } from "../extensions/multiagent/src/types.ts";
 
 const validate = Compile(AgentTeamSchema);
 
@@ -45,6 +46,9 @@ test("AgentTeamSchema preserves public field bounds and defaults", () => {
 	assert.equal(startOptions.notify.properties.minIntervalSeconds.multipleOf, 1);
 	assert.equal(graphSchema.properties.objective.maxLength, MAX_TEXT_FIELD_CHARS);
 	assert.equal(graphSchema.properties.steps.maxItems, MAX_STEPS);
+	assert.equal(graphSchema.properties.limits.properties.concurrency.maximum, MAX_CONCURRENCY);
+	assert.equal(graphSchema.properties.limits.properties.concurrency.multipleOf, 1);
+	assert.match(graphSchema.properties.limits.properties.concurrency.description, new RegExp(`Default ${DEFAULT_CONCURRENCY}`));
 	assert.equal(graphSchema.properties.limits.properties.timeoutSecondsPerStep.default, DEFAULT_TIMEOUT_SECONDS_PER_STEP);
 	assert.equal(graphSchema.properties.limits.properties.timeoutSecondsPerStep.maximum, MAX_TIMEOUT_SECONDS_PER_STEP);
 	assert.equal(graphSchema.properties.limits.properties.timeoutSecondsPerStep.multipleOf, 1);
@@ -61,6 +65,12 @@ test("AgentTeamSchema preserves public field bounds and defaults", () => {
 	assert.match(root.text.description, /not impatience/);
 });
 
+test("normalizeLimits keeps default concurrency below the maximum", () => {
+	assert.equal(normalizeLimits(graph).concurrency, DEFAULT_CONCURRENCY);
+	assert.equal(normalizeLimits({ ...graph, limits: { concurrency: MAX_CONCURRENCY } }).concurrency, MAX_CONCURRENCY);
+	assert.equal(normalizeLimits({ ...graph, limits: { concurrency: MAX_CONCURRENCY + 1 } }).concurrency, MAX_CONCURRENCY);
+});
+
 test("AgentTeamSchema keeps start graph pure and bounded", () => {
 	assert.equal(validate.Check({ action: "start", graph, options: { maxRunSeconds: DEFAULT_MAX_RUN_SECONDS, terminalRetentionSeconds: DEFAULT_TERMINAL_RETENTION_SECONDS, notify: { mode: "milestones", maxNotices: DEFAULT_NOTIFY_MAX_NOTICES, minIntervalSeconds: DEFAULT_NOTIFY_MIN_INTERVAL_SECONDS } } }), true);
 	assert.equal(validate.Check({ action: "start", graph: { ...graph, steps: [] } }), false);
@@ -71,6 +81,9 @@ test("AgentTeamSchema keeps start graph pure and bounded", () => {
 	assert.equal(validate.Check({ action: "start", graph, options: { maxRunSeconds: 1.5 } }), false);
 	assert.equal(validate.Check({ action: "start", graph, options: { terminalRetentionSeconds: 1.5 } }), false);
 	assert.equal(validate.Check({ action: "start", graph, options: { notify: { minIntervalSeconds: 0.5 } } }), false);
+	assert.equal(validate.Check({ action: "start", graph: { ...graph, limits: { concurrency: MAX_CONCURRENCY } } }), true);
+	assert.equal(validate.Check({ action: "start", graph: { ...graph, limits: { concurrency: MAX_CONCURRENCY + 1 } } }), false);
+	assert.equal(validate.Check({ action: "start", graph: { ...graph, limits: { concurrency: 1.5 } } }), false);
 	assert.equal(validate.Check({ action: "start", graph: { ...graph, limits: { timeoutSecondsPerStep: 1.5 } } }), false);
 	assert.equal(validate.Check({ action: "run_status", runId: "r1", maxBytes: 1.5 }), false);
 });

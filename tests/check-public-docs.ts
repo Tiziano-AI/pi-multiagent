@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+	DEFAULT_CONCURRENCY,
 	DEFAULT_MAX_RUN_SECONDS,
 	DEFAULT_NOTIFY_MAX_NOTICES,
 	DEFAULT_NOTIFY_MIN_INTERVAL_SECONDS,
@@ -181,7 +182,7 @@ function checkLimitsContract(): void {
 	const fragments = [
 		`| Steps | ${MAX_STEPS} |`,
 		`| Dependencies per step | ${MAX_DEPENDENCIES_PER_STEP} |`,
-		`| Concurrency | 1 to ${MAX_CONCURRENCY}; default ${MAX_CONCURRENCY} |`,
+		`| Concurrency | 1 to ${MAX_CONCURRENCY}; default ${DEFAULT_CONCURRENCY} |`,
 		`1 to ${MAX_TIMEOUT_SECONDS_PER_STEP} seconds; \`timeoutSecondsPerStep\` defaults to ${DEFAULT_TIMEOUT_SECONDS_PER_STEP} seconds`,
 		`1 to ${MAX_MAX_RUN_SECONDS} seconds; default ${DEFAULT_MAX_RUN_SECONDS} seconds`,
 		`1 to ${MAX_TERMINAL_RETENTION_SECONDS} seconds; default ${DEFAULT_TERMINAL_RETENTION_SECONDS} seconds`,

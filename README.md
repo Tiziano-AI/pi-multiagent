@@ -214,7 +214,7 @@ Before starting any graph with `bash`, verify the graph authority is limited to 
 | --- | --- |
 | Steps | 16 |
 | Dependencies per step | 12 |
-| Concurrency | 1 to 6; default 6 |
+| Concurrency | 1 to 10; default 6 |
 | Per-step timeout | 1 to 36000 seconds; `timeoutSecondsPerStep` defaults to 7200 seconds |
 | Max run time | 1 to 86400 seconds; default 86400 seconds |
 | Terminal retention | 1 to 604800 seconds; default 86400 seconds |

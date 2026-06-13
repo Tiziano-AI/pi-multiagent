@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Increased the `agent_team` graph concurrency maximum from 6 to 10 while keeping the default at 6.
+
 ## 0.9.6 - 2026-05-29
 
 - Added public contributor guidance, GitHub PR/issue templates, and README contribution workflow notes for design-gated architecture changes, scoped PRs, release ownership, and validation expectations.

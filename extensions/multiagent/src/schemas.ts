@@ -5,6 +5,7 @@ import { type Static, Type } from "typebox";
 import {
 	AGENT_TEAM_ACTION_VALUES,
 	BUILTIN_CHILD_TOOL_NAMES,
+	DEFAULT_CONCURRENCY,
 	DEFAULT_MAX_RUN_SECONDS,
 	DEFAULT_NOTIFY_MAX_NOTICES,
 	DEFAULT_NOTIFY_MIN_INTERVAL_SECONDS,
@@ -118,7 +119,7 @@ const StepSchema = Type.Object(
 
 const LimitsSchema = Type.Object(
 	{
-		concurrency: Type.Optional(Type.Number({ description: `Maximum concurrent runnable steps. Default ${MAX_CONCURRENCY}.`, minimum: 1, maximum: MAX_CONCURRENCY, multipleOf: 1 })),
+		concurrency: Type.Optional(Type.Number({ description: `Maximum concurrent runnable steps. Default ${DEFAULT_CONCURRENCY}.`, minimum: 1, maximum: MAX_CONCURRENCY, multipleOf: 1 })),
 		timeoutSecondsPerStep: Type.Optional(Type.Number({ description: `Per-step subprocess timeout seconds. Default ${DEFAULT_TIMEOUT_SECONDS_PER_STEP}.`, minimum: 1, maximum: MAX_TIMEOUT_SECONDS_PER_STEP, multipleOf: 1, default: DEFAULT_TIMEOUT_SECONDS_PER_STEP })),
 	},
 	StrictObjectOptions,
