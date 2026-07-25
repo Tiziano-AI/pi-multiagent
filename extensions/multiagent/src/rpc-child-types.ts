@@ -1,6 +1,6 @@
 /** Shared RPC child controller types. */
 
-import type { AgentInvocationDefaults, ChildSessionMetadata, ResolvedAgent, StepOutputLimit, StepStatus, TeamLimits } from "./types.ts";
+import type { AgentInvocationDefaults, ChildSessionMetadata, ResolvedAgent, StepOutputLimit, StepStatus, StepUsage, TeamLimits } from "./types.ts";
 
 export type RpcChildEventInput = { type: "rpc" | "assistant_final" | "tool" | "diagnostic" | "parent_message" | "ui"; label?: string; preview?: string; status?: string };
 
@@ -30,4 +30,5 @@ export interface RpcStepResult {
 	nonFinalText?: string;
 	childSession?: ChildSessionMetadata;
 	parentMessagesAccepted?: boolean;
+	usage?: StepUsage;
 }

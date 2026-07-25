@@ -4,7 +4,7 @@ import { RpcCommandQueue, type RpcCommandAck } from "./rpc-command-queue.ts";
 import { combinedAssistantFinals, envelopeParentMessage, extractAgentEndErrorMessage, extractAgentEndStopReason, extractEventText, hasAgentEndErrorMetadata, isAgentEndContextOverflow } from "./rpc-record-utils.ts";
 import { STDERR_PREVIEW_CHARS, type StepStatus } from "./types.ts";
 import { buildPiArgs, getPiInvocation, killProcessTree, type SpawnProcess } from "./child-launch.ts";
-import { type RpcJsonRecord } from "./rpc-jsonl.ts";
+import type { RpcJsonRecord } from "./rpc-jsonl.ts";
 import { RpcChildListeners } from "./rpc-child-listeners.ts";
 import { handleUnattendedUiRequest } from "./rpc-ui-request.ts";
 import { ParentMessageBudget } from "./rpc-parent-message-budget.ts";
@@ -12,7 +12,7 @@ import { handleAssistantMessageUpdate } from "./rpc-message-update.ts";
 import { terminateRpcChild } from "./rpc-child-termination.ts";
 import { scheduleRpcExitCloseout } from "./rpc-child-exit-closeout.ts";
 import { RpcChildObservability } from "./rpc-child-observability.ts";
-import { processAssistantMessageEnd } from "./rpc-message-end-handler.ts";
+import { processAssistantMessageEnd, RpcUsageTracker } from "./rpc-message-end-handler.ts";
 import { emptyAssistantFinalFailure, failureRpcStepResult, successRpcStepResult, terminalStopReason } from "./rpc-step-result-builder.ts";
 import { handleRpcToolEvent } from "./rpc-tool-event-handler.ts";
 import type { RpcChildControllerOptions, RpcStepResult } from "./rpc-child-types.ts";
@@ -47,6 +47,7 @@ export class RpcChildController {
 	private exitCloseTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly listeners = new RpcChildListeners();
 	private spawnProcess: SpawnProcess;
+	private readonly usageTracker = new RpcUsageTracker();
 
 	constructor(options: RpcChildControllerOptions) {
 		this.options = options;
@@ -203,6 +204,7 @@ export class RpcChildController {
 		this.lastAssistantErrorMessage = result.errorMessage;
 		if (result.contextOverflowMessage !== undefined) this.enterContextOverflowRecovery("assistant", result.contextOverflowMessage);
 		else if (result.outputBudgetFailure) this.failOutputBudget(result.outputBudgetFailure);
+		this.usageTracker.accumulate(record);
 	}
 
 	private failOutputBudget(failure: OutputBudgetFailure): void {
@@ -232,11 +234,11 @@ export class RpcChildController {
 			this.fail("failed", failure.message, failure.label);
 			return;
 		}
-		this.finalize(successRpcStepResult({ text, assistantFinals: [...this.assistantFinals], stderr: this.stderr, childSession: this.observability.session, parentMessagesAccepted: this.observability.parentMessagesAccepted }));
+		this.finalize(successRpcStepResult({ text, assistantFinals: [...this.assistantFinals], stderr: this.stderr, childSession: this.observability.session, parentMessagesAccepted: this.observability.parentMessagesAccepted, usage: this.usageTracker.snapshot() }));
 	}
 
 	private failureResult(status: StepStatus, message: string): RpcStepResult {
-		return failureRpcStepResult({ status, message, output: this.output, liveText: this.liveText, assistantFinals: [...this.assistantFinals], stderr: this.stderr, lastAssistantStopReason: this.lastAssistantStopReason, childSession: this.observability.session, parentMessagesAccepted: this.observability.parentMessagesAccepted });
+		return failureRpcStepResult({ status, message, output: this.output, liveText: this.liveText, assistantFinals: [...this.assistantFinals], stderr: this.stderr, lastAssistantStopReason: this.lastAssistantStopReason, childSession: this.observability.session, parentMessagesAccepted: this.observability.parentMessagesAccepted, usage: this.usageTracker.snapshot() });
 	}
 
 	private enterContextOverflowRecovery(label: string, message: string): void {

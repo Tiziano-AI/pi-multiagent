@@ -16,7 +16,7 @@ import { terminalRunStatus } from "./run-terminal-status.ts";
 import { RunWaiters } from "./run-waiters.ts";
 import { createRunUiCallback } from "./run-ui-callback.ts";
 import { makeDetails, type AgentTeamRuntimeOptions, unrefTimer } from "./runtime-options.ts";
-import { buildRunSnapshot, buildStepSnapshots, countStepStatuses, findSinkStepIds } from "./run-snapshot.ts";
+import { buildRunSnapshot, buildStepSnapshots, countStepStatuses, findSinkStepIds, sumStepUsages } from "./run-snapshot.ts";
 import { createStepOutputArtifact } from "./step-output-artifact.ts";
 import { stalledStepBlockerMessage } from "./stalled-step-diagnostics.ts";
 import { effectiveAgentInvocation } from "./agent-invocation.ts";
@@ -132,7 +132,7 @@ export class DetachedRun {
 
 	snapshot() {
 		const liveStepIds = this.stepSnapshots().filter((step) => step.status === "running").map((step) => step.id);
-		return buildRunSnapshot({ runId: this.id, objective: this.graph.objective, status: this.status, createdAt: this.createdAt, updatedAt: this.updatedAt, retentionSeconds: this.graph.options.terminalRetentionSeconds, liveStepIds, sinkStepIds: this.sinkStepIds(), lastEvent: this.lastEventSummary(), canMessage: this.status === "running" && liveStepIds.length > 0, canCancel: this.status === "running" || this.status === "canceling", counts: this.counts() });
+		return buildRunSnapshot({ runId: this.id, objective: this.graph.objective, status: this.status, createdAt: this.createdAt, updatedAt: this.updatedAt, retentionSeconds: this.graph.options.terminalRetentionSeconds, liveStepIds, sinkStepIds: this.sinkStepIds(), lastEvent: this.lastEventSummary(), canMessage: this.status === "running" && liveStepIds.length > 0, canCancel: this.status === "running" || this.status === "canceling", counts: this.counts(), teamUsage: sumStepUsages(this.states.values()) });
 	}
 
 	private async schedule() {
@@ -200,6 +200,7 @@ export class DetachedRun {
 		state.nonFinalText = result.nonFinalText;
 		state.assistantFinals = result.assistantFinals;
 		state.childSession = result.childSession;
+		state.usage = result.usage;
 		state.output = this.createStepOutput(state, status, result.text, result.assistantFinals, result.errorMessage, result.nonFinalText);
 		if (result.stderr.length > 0) this.appendEvent({ stepId: state.spec.id, type: "diagnostic", label: "stderr", preview: result.stderr, status: "done" });
 		this.finishState(state, status, result.errorMessage);

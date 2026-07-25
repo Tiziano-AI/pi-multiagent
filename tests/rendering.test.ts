@@ -14,10 +14,12 @@ const theme = {
 const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 test("production code routes live progress through the agent_team widget and notices", () => {
-	for (const file of productionFiles(join(packageRoot, "extensions", "multiagent"))) {
+	for (const file of productionFiles(join(packageRoot, "extensions", "multiagent", "src"))) {
 		const source = readFileSync(file, "utf8");
 		assert.doesNotMatch(source, /\bctx\.ui\.setStatus\b/, `${file}: use agent_team:live widget and notices, not Pi's shared footer status row`);
 	}
+	const entrypoint = readFileSync(join(packageRoot, "extensions", "multiagent", "index.ts"), "utf8");
+	assert.doesNotMatch(entrypoint, /ctx\.ui\.setStatus\((?!FOOTER_COST_FLAG)/, "index.ts setStatus calls must use FOOTER_COST_FLAG");
 });
 
 test("renderAgentTeamCall summarizes detached actions", () => {
@@ -33,7 +35,7 @@ test("renderAgentTeamResult reports catalog and run state", () => {
 	const started = details("start", { run: run({ objective: "detached", liveStepIds: ["one"], sinkStepIds: ["one"], lastEvent: "one: start", counts: counts({ running: 1 }) }) });
 	const rendered = renderAgentTeamResult({ content: [], details: started }, { expanded: false, isPartial: false }, theme, undefined).render(120).join("\n");
 	assert.match(rendered, /agent_team started detached/);
-	assert.match(rendered, /0\/1 complete  1 working/);
+	assert.match(rendered, /0\/1 complete {2}1 working/);
 	assert.match(rendered, /last update one: start/);
 	assert.doesNotMatch(rendered, /objective|active=|sinks=|Can:|cursor|cleanup=true|updated|Artifact:/i);
 });
@@ -61,7 +63,7 @@ test("renderAgentTeamResult renders cancel as a human stop receipt", () => {
 	});
 	const rendered = renderAgentTeamResult({ content: [], details: canceling }, { expanded: false, isPartial: false }, theme, undefined).render(120).join("\n");
 	assert.match(rendered, /agent_team stop requested r1/);
-	assert.match(rendered, /0\/4 complete  4 working/);
+	assert.match(rendered, /0\/4 complete {2}4 working/);
 	assert.match(rendered, /working now runtime-safety prompt sent; \+3 more lanes/);
 	assert.match(rendered, /last update tui-human: terminalizing \[canceled\]/);
 	assert.doesNotMatch(rendered, /cancel canceling|objective|active=|sinks=/i);
@@ -87,8 +89,8 @@ test("renderAgentTeamLiveRunsWidget surfaces active roles and queued work withou
 		],
 	});
 	const rendered = renderAgentTeamLiveRunsWidget([live], theme).render(120).join("\n");
-	assert.match(rendered, /1\/4 complete  2 working  1 queued/);
-	assert.match(rendered, /working now\n  > scout writing\n  > docs-auditor rg running/);
+	assert.match(rendered, /1\/4 complete {2}2 working {2}1 queued/);
+	assert.match(rendered, /working now\n {2}> scout writing\n {2}> docs-auditor rg running/);
 	assert.match(rendered, /queued next synthesizer/);
 	assert.doesNotMatch(rendered, /run_status|step_result|cleanup|cursor|debugEvents|Artifact:/i);
 });
@@ -103,8 +105,8 @@ test("renderAgentTeamLiveRunsWidget lets attention outrank objective text", () =
 	});
 	const rendered = renderAgentTeamLiveRunsWidget([problem], theme).render(120).join("\n");
 	assert.match(rendered, /agent_team attention/);
-	assert.match(rendered, /4\/5 complete  1 failed  1 working/);
-	assert.match(rendered, /needs attention\n  ! validator typecheck failed/);
+	assert.match(rendered, /4\/5 complete {2}1 failed {2}1 working/);
+	assert.match(rendered, /needs attention\n {2}! validator typecheck failed/);
 	assert.doesNotMatch(rendered, /long objective/i);
 });
 
@@ -122,10 +124,10 @@ test("renderAgentTeamLiveRunsWidget distinguishes multiple live runs", () => {
 		steps: [step({ id: "docs", agentRef: "package:docs-auditor", status: "running", lastActivity: "assistant writing" })],
 	});
 	const rendered = renderAgentTeamLiveRunsWidget([first, second, third], theme).render(120).join("\n");
-	assert.match(rendered, /agent_team 3 runs  1 need attention/);
-	assert.match(rendered, /! Release proof 1\/2 complete  1 failed  1 working validator failed: gate failed/);
-	assert.match(rendered, /> TUI rewrite 2\/3 complete  1 working reviewer writing/);
-	assert.match(rendered, /> Docs audit 0\/1 complete  1 working docs-auditor writing/);
+	assert.match(rendered, /agent_team 3 runs {2}1 need attention/);
+	assert.match(rendered, /! Release proof 1\/2 complete {2}1 failed {2}1 working validator failed: gate failed/);
+	assert.match(rendered, /> TUI rewrite 2\/3 complete {2}1 working reviewer writing/);
+	assert.match(rendered, /> Docs audit 0\/1 complete {2}1 working docs-auditor writing/);
 });
 
 test("renderAgentTeamLiveRunsWidget fits narrow widths", () => {

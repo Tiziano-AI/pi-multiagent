@@ -9,6 +9,7 @@ import { compactOutputChildSession, formatOutputChildSession, optionalChildSessi
 import type { AgentTeamDetails, BackgroundEvent, RunSnapshot, StepOutput, StepSnapshot } from "./types.ts";
 
 export { boundedModelText, escapeOutputBlockMarkers, modelText } from "./result-model-text.ts";
+import { formatRunTeamCost, formatStepCost } from "./result-model-text.ts";
 export { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, describeOutputLimit, truncateHead } from "./result-truncation.ts";
 
 const OBJECTIVE_PREVIEW_CHARS = 1000;
@@ -127,7 +128,7 @@ function formatRunAction(title: string, details: AgentTeamDetails): string {
 
 function formatRunSnapshot(run: RunSnapshot): string {
 	const controls = `Exceptional controls: message=${run.canMessage ? "live-clarification-only" : "unavailable"} cancel=${run.canCancel ? "stop-only" : "unavailable"} cleanup=${run.canCleanup ? "terminal-only" : "unavailable"}. Availability is not a recommendation; wait for notices when work is healthy.`;
-	return [`Run: ${modelText(run.runId)}`, `Objective: ${boundedModelText(run.objective, OBJECTIVE_PREVIEW_CHARS)}`, `Status: ${modelText(run.status)} terminal=${run.terminal}`, `Updated: ${modelText(run.updatedAt)}`, `Sinks: ${run.sinkStepIds.length > 0 ? run.sinkStepIds.map(modelText).join(", ") : "none"}`, `Live steps: ${run.liveStepIds.length > 0 ? run.liveStepIds.map(modelText).join(", ") : "none"}`, `Counts: ${formatCounts(run.counts)}`, run.lastEvent ? `Last event: ${modelText(run.lastEvent)}` : "Last event: none", controls].join("\n");
+	return [`Run: ${modelText(run.runId)}`, `Objective: ${boundedModelText(run.objective, OBJECTIVE_PREVIEW_CHARS)}`, `Status: ${modelText(run.status)} terminal=${run.terminal}`, `Updated: ${modelText(run.updatedAt)}`, `Sinks: ${run.sinkStepIds.length > 0 ? run.sinkStepIds.map(modelText).join(", ") : "none"}`, `Live steps: ${run.liveStepIds.length > 0 ? run.liveStepIds.map(modelText).join(", ") : "none"}`, `Counts: ${formatCounts(run.counts)}`, formatRunTeamCost(run.teamUsage), run.lastEvent ? `Last event: ${modelText(run.lastEvent)}` : "Last event: none", controls].filter(Boolean).join("\n");
 }
 
 function formatEffectiveStepTools(steps: StepSnapshot[]): string {
@@ -171,7 +172,7 @@ function formatStep(step: StepSnapshot): string {
 	const activity = step.lastActivity ? ` lastActivity=${JSON.stringify(modelText(step.lastActivity))}` : "";
 	const needs = step.needs.length > 0 ? step.needs.map(modelText).join(",") : "none";
 	const after = step.after.length > 0 ? ` after=${step.after.map(modelText).join(",")}` : "";
-	return `- ${modelText(step.id)}: ${modelText(step.status)} agent=${modelText(step.agentRef)}${optionalScalar(" model", step.model)}${optionalScalar(" thinking", step.thinking)}${optionalOutputLimit(step)} effectiveTools=${formatList(step.effectiveTools)}${optionalList(" extensionTools", step.extensionTools)}${optionalList(" skills", step.callerSkills)} needs=${needs}${after}${optionalChildSession(step)}${optionalRetryHistory(step)}${activity}${error}`;
+	return `- ${modelText(step.id)}: ${modelText(step.status)} agent=${modelText(step.agentRef)}${optionalScalar(" model", step.model)}${optionalScalar(" thinking", step.thinking)}${optionalOutputLimit(step)} effectiveTools=${formatList(step.effectiveTools)}${optionalList(" extensionTools", step.extensionTools)}${optionalList(" skills", step.callerSkills)} needs=${needs}${after}${formatStepCost(step.usage)}${optionalChildSession(step)}${optionalRetryHistory(step)}${activity}${error}`;
 }
 
 function formatEvent(event: BackgroundEvent): string {

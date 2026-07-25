@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added child token usage and cost tracking: each step accumulates usage from `message_end` RPC records and surfaces it as `StepSnapshot.usage` (per-step) and `RunSnapshot.teamUsage` (run total) in `run_status`/`step_result` model output. In interactive Pi, a separate footer status line (`team: $X.XXX ↑Xk ↓Xk ...`) accumulates cost across all `agent_team` runs in the session; disable it with the `agent_team:footer-cost` flag.
+
 ## 0.9.8 - 2026-07-04
 
 - Made child Pi sessions mandatory and observable: child launches now use normal persistent Pi sessions with deterministic names/session-dir propagation, `run_status`/`step_result`/artifacts report child session metadata, progress watchdog diagnostics preserve stalled-child evidence, failed steps retain safe partial evidence, read-only idempotent transport failures retry once only when no child/output/message evidence exists, and parent-message queue observations distinguish accepted, queued, consumed, and no-next-turn states.

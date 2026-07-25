@@ -1,6 +1,26 @@
-import { AssistantOutputBudget, type OutputBudgetFailure } from "./rpc-output-budget.ts";
-import { extractAssistantErrorMessage, extractAssistantStopReason, extractAssistantText, extractEventText, isContextOverflowStop } from "./rpc-record-utils.ts";
+import type { AssistantOutputBudget, OutputBudgetFailure } from "./rpc-output-budget.ts";
+import { extractAssistantErrorMessage, extractAssistantStopReason, extractAssistantText, extractEventText, extractMessageUsage, isContextOverflowStop } from "./rpc-record-utils.ts";
 import type { RpcJsonRecord } from "./rpc-jsonl.ts";
+import type { StepUsage } from "./types.ts";
+
+export class RpcUsageTracker {
+	private usage: StepUsage | undefined;
+
+	accumulate(record: RpcJsonRecord): void {
+		const u = extractMessageUsage(record);
+		if (!u) return;
+		if (!this.usage) this.usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+		this.usage.input += u.input;
+		this.usage.output += u.output;
+		this.usage.cacheRead += u.cacheRead;
+		this.usage.cacheWrite += u.cacheWrite;
+		this.usage.cost += u.cost;
+	}
+
+	snapshot(): StepUsage | undefined {
+		return this.usage ? { ...this.usage } : undefined;
+	}
+}
 
 export interface MessageEndState {
 	output: string;

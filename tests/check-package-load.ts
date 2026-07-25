@@ -121,12 +121,9 @@ async function assertSkillManifest(root: string, label: string, skills: unknown)
 }
 
 function parsePackTarballPath(stdout: string, destination: string): string {
-	const firstJson = stdout.indexOf("[");
-	const lastJson = stdout.lastIndexOf("]");
-	assert.equal(firstJson >= 0 && lastJson >= firstJson, true, "npm pack did not emit JSON");
-	const parsed: unknown = JSON.parse(stdout.slice(firstJson, lastJson + 1));
-	assert.equal(Array.isArray(parsed), true, "npm pack JSON should be an array");
-	const manifest: unknown = parsed[0];
+	const parsed: unknown = JSON.parse(stdout.trim());
+	assert.equal(typeof parsed === "object" && parsed !== null, true, "npm pack did not emit JSON");
+	const manifest: unknown = Array.isArray(parsed) ? parsed[0] : Object.values(parsed as Record<string, unknown>)[0];
 	if (!isRecord(manifest)) throw new Error("npm pack entry should be an object");
 	assert.equal(typeof manifest.filename, "string", "npm pack entry should include filename");
 	return join(destination, manifest.filename);

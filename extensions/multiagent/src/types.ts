@@ -8,6 +8,14 @@ export type InvocationAgentKind = "inline" | "library";
 export type ThinkingLevel = "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type InvocationThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 export type RunStatus = "running" | "succeeded" | "mixed" | "failed" | "canceling" | "canceled" | "expired";
+
+export interface StepUsage {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+}
 export type StepStatus = "pending" | "running" | "succeeded" | "failed" | "blocked" | "timed_out" | "canceled";
 export type MessageChannel = "steer" | "follow_up";
 export type NotifyMode = "none" | "final" | "milestones";
@@ -339,6 +347,7 @@ export interface RunSnapshot {
 	canCancel: boolean;
 	canCleanup: boolean;
 	counts: Record<StepStatus, number>;
+	teamUsage?: StepUsage;
 }
 
 export interface StepArtifactReference {
@@ -387,6 +396,7 @@ export interface StepSnapshot {
 	upstreamArtifacts?: StepArtifactReference[];
 	childSession?: ChildSessionMetadata;
 	retryHistory?: StepRetryRecord[];
+	usage?: StepUsage;
 }
 
 export interface StepOutput {

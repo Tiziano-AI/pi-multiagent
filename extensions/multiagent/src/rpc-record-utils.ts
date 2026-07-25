@@ -2,7 +2,7 @@
 
 import { formatAssistantFinalMessages } from "./detached-output.ts";
 import type { RpcJsonRecord } from "./rpc-jsonl.ts";
-import type { MessageChannel } from "./types.ts";
+import type { MessageChannel, StepUsage } from "./types.ts";
 
 export function combinedAssistantFinals(texts: string[]): string {
 	if (texts.length === 1) return texts[0] ?? "";
@@ -100,6 +100,24 @@ export function envelopeParentMessage(channel: MessageChannel, text: string): st
 
 export function stringField(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
+}
+
+export function extractMessageUsage(record: RpcJsonRecord): StepUsage | undefined {
+	const message = assistantMessage(record);
+	if (!message) return undefined;
+	const u = isRecord(message.usage) ? message.usage : undefined;
+	if (!u) return undefined;
+	const input = numberField(u.input);
+	const output = numberField(u.output);
+	const cacheRead = numberField(u.cacheRead);
+	const cacheWrite = numberField(u.cacheWrite);
+	const costTotal = isRecord(u.cost) ? numberField(u.cost.total) : undefined;
+	if (input === undefined && output === undefined && costTotal === undefined) return undefined;
+	return { input: input ?? 0, output: output ?? 0, cacheRead: cacheRead ?? 0, cacheWrite: cacheWrite ?? 0, cost: costTotal ?? 0 };
+}
+
+function numberField(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function assistantMessage(record: RpcJsonRecord): RpcJsonRecord | undefined {

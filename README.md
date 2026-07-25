@@ -129,6 +129,22 @@ Inspect the file's authority, tools, extension grants, prompts, tasks, and `cwd`
 
 Do not point `graphFile` at installed package/example paths. Packaged examples are references to copy and adapt. Do not put `action`, `runId`, nested `graphFile`, or other control fields inside the graph file.
 
+## Cost visibility
+
+After each terminal `agent_team` run, a separate footer status line shows the accumulated child token cost for the session:
+
+```
+team: $1.234 ↑80k ↓16k R4.0M W91k
+```
+
+This is distinct from the parent session's own `$X.XXX` counter. Disable it:
+
+```
+/flag agent_team:footer-cost false
+```
+
+Per-step cost and the run total also appear in `run_status` and `step_result` output.
+
 ## Safe operating rules
 
 - Prefer one direct pass when delegation would add noise.
