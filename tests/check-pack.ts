@@ -10,12 +10,9 @@ const result = spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: packageR
 if (result.stderr.length > 0) process.stderr.write(result.stderr);
 assert.equal(result.status, 0, result.error?.message ?? result.stderr);
 
-const firstJson = result.stdout.indexOf("[");
-const lastJson = result.stdout.lastIndexOf("]");
-assert.equal(firstJson >= 0 && lastJson >= firstJson, true, "npm pack did not emit JSON");
-const parsed: unknown = JSON.parse(result.stdout.slice(firstJson, lastJson + 1));
-assert.equal(Array.isArray(parsed), true, "npm pack JSON should be an array");
-const manifest = parsed[0];
+const parsed: unknown = JSON.parse(result.stdout.trim());
+assert.equal(typeof parsed === "object" && parsed !== null, true, "npm pack did not emit JSON");
+const manifest = Array.isArray(parsed) ? parsed[0] : Object.values(parsed as Record<string, unknown>)[0];
 assert.equal(typeof manifest === "object" && manifest !== null && "files" in manifest, true, "npm pack JSON should include files");
 const rawFiles = manifest.files;
 assert.equal(Array.isArray(rawFiles), true, "npm pack files should be an array");
