@@ -46,7 +46,7 @@ These are the maintainer's standing decisions and the open questions that the ne
 
 **Users of 0.9.8 have a child-completion defect.** Released `0.9.8` closes a child when Pi emits `agent_end` (`src/rpc-child-controller.ts`). `agent_end` is preliminary: Pi can still retry, compact or run queued follow-up work after it. In an observed Pi 0.81 incident, a child finished a valid compaction and its step stayed alive until the outer timeout; progress notices also started parent turns that ran into the context limit, queue updates that arrived before the command acknowledgement were missed, and child usage was reported nowhere. The defect was identified from the code and that incident and has not been reproduced on newer Pi.
 
-**A lifecycle repair exists but is unreleased.** It is planned as `0.10.0`: the public contract is unchanged apart from higher Node and Pi floors. Its runtime contracts are:
+**A lifecycle repair exists but is unreleased.** It is uncommitted work in the maintainer's checkout (`MAINTAINER.md` says what it holds), not yet in `main`, so the floors and the `src/rpc-child-settlement.ts` module named below are not in a public clone. It is planned as `0.10.0`: the public contract is unchanged apart from higher Node and Pi floors. Its runtime contracts are:
 
 - Runtime floors are Node.js `>=22.19.0` and Pi `>=0.81.0`, the Pi version the repair was written against.
 - A child's `agent_end` is preliminary. Normal closeout belongs to `agent_settled` followed by a Pi `get_state` readback showing no streaming and no compaction.
