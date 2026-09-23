@@ -4,14 +4,15 @@ node_modules/
 .npm/
 .yarn/
 
-# Local Pi state, agent notes, and control-plane files
+# Local Pi state and maintainer notes (AGENTS.md is tracked)
 .pi/
 CONTINUE.md
+MAINTAINER.md
 meta_study.md
+action_plan.md
 PLAN.md
 HANDOFF.md
 TODO.md
-AGENTS.md
 ARCH.md
 VISION.md
 
